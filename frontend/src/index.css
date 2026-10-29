@@ -1,0 +1,110 @@
+@import 'tailwindcss';
+
+/* ── 设计令牌（取自 Calicat 设计稿实测色值） ───────────────── */
+@theme {
+  --color-canvas: #fafafa;
+
+  --color-hero-from: #192236;
+  --color-hero-to: #283448;
+
+  --color-emerald-brand: #0ea186;
+
+  --font-sans: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+
+  --radius-card: 16px;
+}
+
+:root {
+  --ink-900: #18181b;
+  --ink-700: #3f3f46;
+  --ink-500: #71717a;
+  --ink-400: #a1a1aa;
+  --line: #ececf0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--ink-900);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 数字统一使用等宽字形，避免跳动 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 复用类 ───────────────────────────────────────────── */
+@layer components {
+  .card {
+    @apply rounded-2xl border border-[var(--line)] bg-white;
+  }
+
+  .card-pad {
+    @apply p-5;
+  }
+
+  .label-xs {
+    @apply text-[11px] font-medium tracking-wide text-[var(--ink-500)];
+  }
+
+  .meta-text {
+    @apply text-[12px] text-[var(--ink-500)];
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-[3px] text-[11px] font-medium whitespace-nowrap;
+  }
+
+  .btn-dark {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-full bg-[#18181b] px-4 text-[13px] font-medium text-white transition-colors hover:bg-black;
+    height: 34px;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-full border border-[var(--line)] bg-white px-4 text-[13px] font-medium text-[var(--ink-700)] transition-colors hover:bg-[#f7f7f8];
+    height: 34px;
+  }
+
+  .icon-btn {
+    @apply inline-flex size-8 items-center justify-center rounded-full border border-[var(--line)] bg-white text-[var(--ink-500)] transition-colors hover:bg-[#f7f7f8];
+  }
+
+  .filter-pill {
+    @apply inline-flex h-7 items-center gap-1 rounded-full px-3 text-[12px] font-medium text-[var(--ink-500)] transition-colors hover:bg-[#f4f4f5];
+  }
+
+  .filter-pill-active {
+    @apply bg-[#18181b] text-white hover:bg-[#18181b];
+  }
+
+  .table-th {
+    @apply px-4 py-3 text-left text-[11px] font-medium text-[var(--ink-400)];
+  }
+
+  .table-td {
+    @apply px-4 py-3 align-middle text-[12.5px] text-[var(--ink-700)];
+  }
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #dcdce2;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

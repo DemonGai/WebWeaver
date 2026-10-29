@@ -1,0 +1,24 @@
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.local
+
+# 后端
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/.env
+backend/.pytest_cache/
+backend/.ruff_cache/
+
+# 预览产物
+.preview/
+
+# 通用
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -104,7 +104,6 @@ class ClusterInfo(BaseModel):
     total: int
     online: int
     health: float
-    delta: int
     updated_seconds: int
     accounts_used: int
     accounts_total: int
@@ -114,18 +113,21 @@ class ClusterInfo(BaseModel):
     novnc_fps: int
 
 
+class HealthPart(BaseModel):
+    """健康分的构成项：主指标（总分）+ 四个可解释的分项。"""
+
+    key: str
+    label: str
+    score: float
+    weight: int
+    detail: str
+    tone: str
+
+
 class PoolStatusItem(BaseModel):
     label: str
     value: int
     status: InstanceStatus
-
-
-class LoadInfo(BaseModel):
-    cpu: int
-    memory: int
-    bandwidth: int
-    disconnect_minutes: int
-    reconnects: int
 
 
 class TrendStat(BaseModel):
@@ -134,23 +136,16 @@ class TrendStat(BaseModel):
     unit: str
 
 
-class NoVncPreview(BaseModel):
-    instance: str
-    url: str
-    fps: int
-    latency_ms: int
-
-
 class OverviewPayload(BaseModel):
+    range: str
     cluster: ClusterInfo
+    health_parts: list[HealthPart]
     pool_status: list[PoolStatusItem]
-    load: LoadInfo
     cards: list[MiniCard]
     instances: list[InstanceSummary]
     events: list[ClusterEvent]
     trend: TrendPoint
     trend_stats: list[TrendStat]
-    novnc_preview: NoVncPreview
 
 
 # ── 浏览器池 ────────────────────────────────────────────

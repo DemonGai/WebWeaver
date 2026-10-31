@@ -1,42 +1,44 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
+import { ApiError } from '@/api/client'
 import { useApi } from '@/hooks/useApi'
 import { PageHeader, PageShell } from '@/components/Layout'
+import { Card, Checkbox, PillTabs, SearchInput, type Tone } from '@/components/ui'
+import { SelectMenu } from '@/components/SelectMenu'
+import { BrowserDialog } from '@/components/BrowserDialog'
+import { Modal } from '@/components/Modal'
 import {
-  Card,
-  HeroBadge,
-  HeroCard,
-  PillTabs,
-  SearchInput,
-  SelectBox,
-  type Tone,
-} from '@/components/ui'
-import {
-  IconArrowRight,
+  IconAlert,
   IconBolt,
-  IconBrowser,
+  IconCheckCircle,
   IconClock,
-  IconExpand,
   IconFingerprint,
   IconGlobe,
   IconGrid,
+  IconLayers,
   IconList,
   IconMonitor,
   IconMore,
   IconPlus,
+  IconPlay,
   IconPower,
   IconRefresh,
-  IconShare,
-  IconSliders,
+  IconTrash,
   IconUser,
+  IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
-import type { InstanceStatus, InstanceSummary } from '@/types/domain'
+import type {
+  BrowserActionName,
+  BrowserDetail,
+  InstanceStatus,
+  InstanceSummary,
+} from '@/types/domain'
 
 const meta: Record<InstanceStatus, { label: string; tone: Tone }> = {
   running: { label: '运行中', tone: 'emerald' },
-  idle: { label: '空间', tone: 'blue' },
+  idle: { label: '空闲', tone: 'blue' },
   error: { label: '异常', tone: 'rose' },
   stopped: { label: '已停止', tone: 'zinc' },
   queued: { label: '排队中', tone: 'amber' },
@@ -50,12 +52,158 @@ const statusChip: Record<InstanceStatus, string> = {
   queued: 'bg-amber-50 text-amber-600',
 }
 
+type Toast = { tone: 'ok' | 'err'; text: string } | null
+
 export default function BrowserPoolPage() {
   const navigate = useNavigate()
-  const { data, status, error, reload } = useApi(endpoints.browsers, [])
-  const [tab, setTab] = useState('all')
+  const { data, status, error, reload, refresh } = useApi(endpoints.browsers, [])
 
-  if (status === 'loading') return <PageShell><Loading /></PageShell>
+  const [query, setQuery] = useState('')
+  const [tab, setTab] = useState('all')
+  const [group, setGroup] = useState('')
+  const [view, setView] = useState<'grid' | 'list'>('grid')
+  const [selected, setSelected] = useState<string[]>([])
+  const [busy, setBusy] = useState<string[]>([])
+  const [dialog, setDialog] = useState<{ open: boolean; id: string | null }>({
+    open: false,
+    id: null,
+  })
+  const [confirming, setConfirming] = useState<InstanceSummary | null>(null)
+  const [toast, setToast] = useState<Toast>(null)
+
+  // 提示条自己消失：不要留一个需要手动关掉的黄色条
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => setToast(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [toast])
+
+  const notify = useCallback((tone: 'ok' | 'err', text: string) => {
+    setToast({ tone, text })
+  }, [])
+
+  const instances = data?.instances ?? []
+
+  // 筛选项在本地算：后端只给四个状态，这里还要有「已停止」和搜索后的计数
+  const tabs = useMemo(() => {
+    const count = (key: string) =>
+      key === 'all'
+        ? instances.length
+        : instances.filter((it) => it.status === (key as InstanceStatus)).length
+    return [
+      { key: 'all', label: '全部' },
+      { key: 'running', label: '运行中' },
+      { key: 'idle', label: '空闲' },
+      { key: 'queued', label: '排队中' },
+      { key: 'error', label: '异常' },
+      { key: 'stopped', label: '已停止' },
+    ].map((item) => ({ ...item, count: count(item.key) }))
+  }, [instances])
+
+  const groups = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const it of instances) map.set(it.group, (map.get(it.group) ?? 0) + 1)
+    return Array.from(map, ([value, count]) => ({ value, label: value, count })).sort((a, b) =>
+      a.label.localeCompare(b.label, 'zh'),
+    )
+  }, [instances])
+
+  const groupItems = useMemo(
+    () => [{ value: '', label: '全部分组', count: instances.length }, ...groups],
+    [groups, instances.length],
+  )
+
+  const visible = useMemo(() => {
+    const keyword = query.trim().toLowerCase()
+    return instances.filter((it) => {
+      if (tab !== 'all' && it.status !== tab) return false
+      if (group && it.group !== group) return false
+      if (!keyword) return true
+      return [it.name, it.account, it.ip, it.region, it.fingerprint, it.group]
+        .join(' ')
+        .toLowerCase()
+        .includes(keyword)
+    })
+  }, [instances, tab, group, query])
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+
+  const allChecked = visible.length > 0 && visible.every((it) => selected.includes(it.id))
+  const someChecked = visible.some((it) => selected.includes(it.id))
+
+  const runAction = useCallback(
+    async (id: string, action: BrowserActionName) => {
+      setBusy((prev) => [...prev, id])
+      try {
+        const res = await endpoints.browserAction(id, action)
+        notify(res.ok ? 'ok' : 'err', res.message)
+        refresh()
+      } catch (err) {
+        notify('err', err instanceof ApiError || err instanceof Error ? err.message : '操作失败')
+      } finally {
+        setBusy((prev) => prev.filter((x) => x !== id))
+      }
+    },
+    [notify, refresh],
+  )
+
+  const runBatch = useCallback(
+    async (action: BrowserActionName) => {
+      if (selected.length === 0) {
+        notify('err', '先在卡片左上角勾选要操作的实例')
+        return
+      }
+      setBusy(selected)
+      try {
+        const res = await endpoints.browserBatch(selected, action)
+        const label = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'
+        if (res.failed === 0) {
+          notify('ok', `已${label} ${res.succeeded} 台实例`)
+        } else {
+          // 失败原因逐条列出来，用户才知道是哪一台、为什么
+          const first = res.items.find((item) => !item.ok)
+          notify(
+            'err',
+            `${label}完成 ${res.succeeded} 台，失败 ${res.failed} 台${first ? `：${first.message}` : ''}`,
+          )
+        }
+        setSelected([])
+        refresh()
+      } catch (err) {
+        notify('err', err instanceof Error ? err.message : '批量操作失败')
+      } finally {
+        setBusy([])
+      }
+    },
+    [notify, refresh, selected],
+  )
+
+  const removeInstance = async (item: InstanceSummary) => {
+    try {
+      await endpoints.deleteBrowser(item.id)
+      notify('ok', `实例 ${item.name} 已删除`)
+      setConfirming(null)
+      setSelected((prev) => prev.filter((x) => x !== item.id))
+      refresh()
+    } catch (err) {
+      setConfirming(null)
+      notify('err', err instanceof ApiError || err instanceof Error ? err.message : '删除失败')
+    }
+  }
+
+  const saved = (detail: BrowserDetail, created: boolean) => {
+    setDialog({ open: false, id: null })
+    notify('ok', created ? `实例 ${detail.name} 已创建` : `${detail.name} 的配置已保存`)
+    refresh()
+  }
+
+  if (status === 'loading')
+    return (
+      <PageShell>
+        <Loading />
+      </PageShell>
+    )
   if (status === 'error')
     return (
       <PageShell>
@@ -64,158 +212,307 @@ export default function BrowserPoolPage() {
     )
   if (!data) return null
 
-  const { totals, cards, instances, filters } = data
-  const visible =
-    tab === 'all'
-      ? instances
-      : instances.filter((i) =>
-          tab === 'running' ? i.status === 'running' : tab === 'idle' ? i.status === 'idle' : i.status === 'error',
-        )
-
   return (
     <PageShell>
       <PageHeader
         title="浏览器池"
         subtitle="每个实例可独立绑定账号、出口 IP 与浏览器指纹，并通过 noVNC 实时接管"
         actions={
-          <>
-            <button type="button" className="btn-ghost">
-              <IconPower size={14} />
-              批量启动
-            </button>
-            <button type="button" className="btn-dark">
-              <IconPlus size={14} />
-              新建浏览器实例
-            </button>
-          </>
+          <button
+            type="button"
+            className="btn-dark"
+            onClick={() => setDialog({ open: true, id: null })}
+          >
+            <IconPlus size={14} />
+            新建浏览器实例
+          </button>
         }
       />
 
-      {/* 顶部统计 */}
-      <div className="grid grid-cols-12 gap-4">
-        <HeroCard
-          className="col-span-4"
-          eyebrow="运行中实例"
-          badge={
-            <HeroBadge>
-              <IconBolt size={10} />
-              +{totals.delta} 较昨日
-            </HeroBadge>
-          }
-          value={totals.running}
-          unit={`/ ${totals.total} 台`}
+      {toast && (
+        <div
+          className={`mb-3 flex items-start gap-2 rounded-xl px-4 py-2.5 text-[12px] ${
+            toast.tone === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'
+          }`}
         >
-          <div className="mt-5 flex items-center gap-[7px]">
-            {Array.from({ length: 10 }).map((_, i) => {
-              const hi = [2, 4, 7].includes(i)
-              return (
-                <span
-                  key={i}
-                  className={`h-[20px] flex-1 rounded-full ${hi ? 'bg-blue-400' : 'bg-white/15'}`}
-                />
-              )
-            })}
-          </div>
-        </HeroCard>
-
-        <div className="col-span-8 grid grid-cols-3 gap-4">
-          {cards.map((c) => (
-            <Card key={c.title} className="flex flex-col justify-between p-5">
-              <div className="flex items-start justify-between">
-                <span
-                  className={`flex size-7 items-center justify-center rounded-lg ${iconTone[c.tone]}`}
-                >
-                  {cardIcon(c.title)}
-                </span>
-                <span className="text-[11px] text-[var(--ink-400)]">{c.tag}</span>
-              </div>
-              <div>
-                <div className="tnum text-[30px] leading-none font-semibold tracking-tight">
-                  {c.value}
-                </div>
-                <div className="mt-1.5 text-[12px] text-[var(--ink-500)]">{c.hint}</div>
-              </div>
-            </Card>
-          ))}
+          <span className="mt-[1px] shrink-0">
+            {toast.tone === 'ok' ? <IconCheckCircle size={13} /> : <IconAlert size={13} />}
+          </span>
+          <span className="flex-1">{toast.text}</span>
+          <button type="button" onClick={() => setToast(null)} className="shrink-0 opacity-60">
+            <IconX size={12} />
+          </button>
         </div>
-      </div>
+      )}
 
       {/* 筛选栏 */}
-      <Card className="mt-4 flex flex-wrap items-center justify-between gap-3 p-3.5">
+      <Card className="flex flex-wrap items-center justify-between gap-3 p-3.5">
         <div className="flex items-center gap-3">
-          <SearchInput placeholder="按实例名、账号或 IP 搜索" width="w-[260px]" />
+          <SearchInput
+            placeholder="按实例名、账号或 IP 搜索"
+            width="w-[260px]"
+            value={query}
+            onChange={setQuery}
+          />
           <PillTabs
-            items={filters.map((f) => ({
-              key: f.key,
-              label: f.label,
-              count: f.count,
-              tone: f.key === 'running' ? 'emerald' : f.key === 'idle' ? 'blue' : 'rose',
+            items={tabs.map((f) => ({
+              ...f,
+              tone:
+                f.key === 'running'
+                  ? 'emerald'
+                  : f.key === 'idle'
+                    ? 'blue'
+                    : f.key === 'error'
+                      ? 'rose'
+                      : f.key === 'queued'
+                        ? 'amber'
+                        : 'zinc',
             }))}
             active={tab}
             onSelect={setTab}
           />
         </div>
         <div className="flex items-center gap-2">
-          <SelectBox label="全部分组" />
-          <SelectBox label="指纹模板" />
-          <div className="flex items-center gap-1 rounded-full border border-[var(--line)] p-0.5">
-            <button type="button" className="flex size-7 items-center justify-center rounded-full bg-[#18181b] text-white">
+          <SelectMenu
+            value={group}
+            items={groupItems}
+            onChange={setGroup}
+            icon={<IconLayers size={13} />}
+            placeholder="全部分组"
+            panelHeader="按分组筛选"
+          />
+          <span className="mx-0.5 h-4 w-px bg-[var(--line)]" />
+          <div className="flex items-center gap-0.5 rounded-full bg-[#f4f4f5] p-0.5">
+            <button
+              type="button"
+              onClick={() => setView('grid')}
+              aria-label="卡片视图"
+              aria-pressed={view === 'grid'}
+              title="卡片视图"
+              className={`flex size-7 items-center justify-center rounded-full transition-all ${
+                view === 'grid'
+                  ? 'bg-white text-[var(--ink-900)] shadow-[0_1px_2px_rgba(16,24,40,0.14)]'
+                  : 'text-[var(--ink-400)] hover:text-[var(--ink-700)]'
+              }`}
+            >
               <IconGrid size={13} />
             </button>
-            <button type="button" className="flex size-7 items-center justify-center rounded-full text-[var(--ink-400)]">
+            <button
+              type="button"
+              onClick={() => setView('list')}
+              aria-label="列表视图"
+              aria-pressed={view === 'list'}
+              title="列表视图"
+              className={`flex size-7 items-center justify-center rounded-full transition-all ${
+                view === 'list'
+                  ? 'bg-white text-[var(--ink-900)] shadow-[0_1px_2px_rgba(16,24,40,0.14)]'
+                  : 'text-[var(--ink-400)] hover:text-[var(--ink-700)]'
+              }`}
+            >
               <IconList size={13} />
             </button>
           </div>
         </div>
       </Card>
 
-      {/* 实例卡片网格 */}
-      <div className="mt-4 grid grid-cols-2 gap-4">
-        {visible.map((it, idx) => (
-          <InstanceCard key={it.id} item={it} index={idx} onOpen={() => navigate('/novnc/' + it.id)} />
-        ))}
-
-        {/* 新建入口 */}
-        <button
-          type="button"
-          className="flex items-center justify-center gap-3 rounded-2xl border border-dashed border-[#dcdce2] bg-white/60 py-6 transition-colors hover:bg-white"
-        >
-          <span className="flex size-8 items-center justify-center rounded-lg bg-[#f4f4f5] text-[var(--ink-500)]">
-            <IconPlus size={15} />
+      {/* 批量操作条：只在有勾选时出现，不占常驻空间 */}
+      {selected.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#dcdce2] bg-white px-4 py-2.5">
+          <span className="text-[12px] text-[var(--ink-700)]">
+            已选 <span className="tnum font-semibold">{selected.length}</span> 台实例
           </span>
-          <span className="text-left">
-            <span className="block text-[13px] font-medium text-[var(--ink-900)]">新建浏览器实例</span>
-            <span className="mt-0.5 block text-[11.5px] text-[var(--ink-400)]">
-              批量创建 10 / 50 / 100 台并自动分配账号与 IP
-            </span>
-          </span>
-        </button>
-
-        {/* 批量绑定向导 */}
-        <div className="relative overflow-hidden rounded-2xl bg-[linear-gradient(115deg,#4171f1_0%,#4f48e6_100%)] p-5 text-white">
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="text-[13px] font-semibold">批量绑定向导</div>
-              <div className="mt-1 text-[11.5px] text-white/70">
-                按规则为实例批量分配账号、IP 与指纹模板
-              </div>
-            </div>
-            <span className="text-white/60">
-              <IconShare size={15} />
-            </span>
-          </div>
-          <div className="mt-6 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button type="button" className="btn-ghost !h-7 !px-3 !text-[11.5px]" onClick={() => runBatch('start')}>
+              <IconPower size={11} />
+              启动
+            </button>
+            <button type="button" className="btn-ghost !h-7 !px-3 !text-[11.5px]" onClick={() => runBatch('stop')}>
+              停止
+            </button>
+            <button type="button" className="btn-ghost !h-7 !px-3 !text-[11.5px]" onClick={() => runBatch('restart')}>
+              <IconRefresh size={11} />
+              重启
+            </button>
             <button
               type="button"
-              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-white px-3.5 text-[12px] font-medium text-[#3f4bd8]"
+              className="icon-btn size-7"
+              aria-label="取消选择"
+              onClick={() => setSelected([])}
             >
-              开始配置
-              <IconArrowRight size={12} />
+              <IconX size={12} />
             </button>
-            <span className="text-[11px] text-white/70">剩余 24 台实例待绑定</span>
           </div>
         </div>
+      )}
+
+      {/* 实例列表 */}
+      {visible.length === 0 ? (
+        <div className="mt-4 rounded-2xl border border-dashed border-[#dcdce2] px-6 py-14 text-center">
+          <p className="text-[12.5px] font-medium text-[var(--ink-700)]">当前条件下没有实例</p>
+          <p className="mt-1 text-[11.5px] text-[var(--ink-400)]">
+            换个状态标签、分组，或清空搜索关键词
+          </p>
+        </div>
+      ) : view === 'grid' ? (
+        <div className="mt-4 grid grid-cols-2 gap-4">
+          {visible.map((it, idx) => (
+            <InstanceCard
+              key={it.id}
+              item={it}
+              index={idx}
+              checked={selected.includes(it.id)}
+              busy={busy.includes(it.id)}
+              onToggle={() => toggleSelect(it.id)}
+              onOpen={() => navigate('/novnc/' + it.id)}
+              onAction={(action) => runAction(it.id, action)}
+              onConfigure={() => setDialog({ open: true, id: it.id })}
+              onDelete={() => setConfirming(it)}
+            />
+          ))}
+        </div>
+      ) : (
+        <Card className="mt-4 overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-[var(--line)]">
+                <th className="w-11 px-4 py-3">
+                  <Checkbox
+                    checked={allChecked}
+                    indeterminate={someChecked && !allChecked}
+                    onChange={(next) => setSelected(next ? visible.map((it) => it.id) : [])}
+                    label="全选"
+                  />
+                </th>
+                <th className="table-th">实例</th>
+                <th className="table-th">状态</th>
+                <th className="table-th">账号 / 出口</th>
+                <th className="table-th">指纹</th>
+                <th className="table-th">分组</th>
+                <th className="table-th text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((it) => {
+                const busyNow = busy.includes(it.id)
+                return (
+                  <tr key={it.id} className="border-b border-[var(--line)] last:border-0">
+                    <td className="px-4 py-3">
+                      <Checkbox
+                        checked={selected.includes(it.id)}
+                        onChange={() => toggleSelect(it.id)}
+                        label={`选择 ${it.name}`}
+                      />
+                    </td>
+                    <td className="table-td">
+                      <div className="font-medium text-[var(--ink-900)]">{it.name}</div>
+                      <div className="mt-0.5 text-[10.5px] text-[var(--ink-400)]">
+                        {it.note ?? '—'}
+                      </div>
+                    </td>
+                    <td className="table-td">
+                      <span className={`chip ${statusChip[it.status]}`}>
+                        <span className="size-[4px] rounded-full bg-current" />
+                        {meta[it.status].label}
+                      </span>
+                    </td>
+                    <td className="table-td">
+                      <div>{it.account}</div>
+                      <div className="mt-0.5 text-[10.5px] text-[var(--ink-400)]">
+                        {it.ip} · {it.region}
+                      </div>
+                    </td>
+                    <td className="table-td text-[11.5px]">{it.fingerprint}</td>
+                    <td className="table-td text-[11.5px]">{it.group}</td>
+                    <td className="table-td">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          disabled={busyNow}
+                          onClick={() => runAction(it.id, it.status === 'running' ? 'stop' : 'start')}
+                          className="btn-ghost !h-7 !px-2.5 !text-[11px] disabled:opacity-50"
+                        >
+                          {it.status === 'running' ? '停止' : '启动'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate('/novnc/' + it.id)}
+                          className="btn-dark !h-7 !px-2.5 !text-[11px]"
+                        >
+                          noVNC
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="配置"
+                          onClick={() => setDialog({ open: true, id: it.id })}
+                          className="icon-btn size-7"
+                        >
+                          <IconMore size={12} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--ink-400)]">
+        <span>
+          共 {instances.length} 台实例 · 当前筛选显示 {visible.length} 台
+          {selected.length > 0 && ` · 已选 ${selected.length} 台`}
+        </span>
+        {visible.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setSelected(allChecked ? [] : visible.map((it) => it.id))}
+            className="rounded-full px-2 py-0.5 text-[11px] font-medium text-[var(--ink-500)] transition-colors hover:bg-[#f4f4f5] hover:text-[var(--ink-900)]"
+          >
+            {allChecked ? '取消全选' : `全选当前 ${visible.length} 台`}
+          </button>
+        )}
       </div>
+
+      <BrowserDialog
+        open={dialog.open}
+        browserId={dialog.id}
+        onClose={() => setDialog({ open: false, id: null })}
+        onSaved={saved}
+      />
+
+      <Modal
+        open={confirming !== null}
+        onClose={() => setConfirming(null)}
+        title="删除实例"
+        subtitle={
+          confirming
+            ? `将删除 ${confirming.name} 及其绑定流水，审计记录会保留`
+            : undefined
+        }
+        icon={<IconTrash size={15} />}
+        width="max-w-[440px]"
+        footer={
+          <>
+            <button type="button" className="btn-ghost !h-9" onClick={() => setConfirming(null)}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="!h-9 inline-flex items-center gap-1.5 rounded-full bg-rose-600 px-4 text-[13px] font-medium text-white hover:bg-rose-700"
+              onClick={() => confirming && removeInstance(confirming)}
+            >
+              <IconTrash size={12} />
+              确认删除
+            </button>
+          </>
+        }
+      >
+        <p className="py-3 text-[12px] leading-relaxed text-[var(--ink-600)]">
+          实例运行中无法删除，请先停止。删除后账号、出口 IP 与指纹会回到可分配状态，
+          对应的绑定流水一并清理。
+        </p>
+      </Modal>
     </PageShell>
   )
 }
@@ -223,36 +520,65 @@ export default function BrowserPoolPage() {
 function InstanceCard({
   item,
   index,
+  checked,
+  busy,
+  onToggle,
   onOpen,
+  onAction,
+  onConfigure,
+  onDelete,
 }: {
   item: InstanceSummary
   index: number
+  checked: boolean
+  busy: boolean
+  onToggle: () => void
   onOpen: () => void
+  onAction: (action: BrowserActionName) => void
+  onConfigure: () => void
+  onDelete: () => void
 }) {
+  const [menu, setMenu] = useState(false)
   const badge = meta[item.status]
-  const primary =
-    item.status === 'error'
-      ? { label: '立即重连', icon: <IconRefresh size={11} /> }
-      : item.status === 'idle'
-        ? { label: '接管会话', icon: <IconMonitor size={11} /> }
-        : { label: '打开 noVNC', icon: <IconMonitor size={11} /> }
-  const secondary = item.status === 'error' ? '更换 IP' : '绑定配置'
+  const running = item.status === 'running'
+
+  const primary = running
+    ? { label: '打开 noVNC', icon: <IconMonitor size={11} />, run: onOpen }
+    : item.status === 'error'
+      ? { label: '重新启动', icon: <IconRefresh size={11} />, run: () => onAction('restart') }
+      : { label: '启动实例', icon: <IconPlay size={11} />, run: () => onAction('start') }
 
   return (
-    <Card className="flex gap-4 p-4">
+    <Card
+      className={`group relative flex gap-4 p-4 transition-[box-shadow,border-color] duration-150 hover:border-[#e3e3e9] hover:shadow-[0_6px_20px_-12px_rgba(16,24,40,0.22)] ${
+        checked
+          ? 'border-[#18181b]/25 shadow-[0_6px_20px_-12px_rgba(16,24,40,0.28)]'
+          : ''
+      }`}
+    >
       <div
-        className={`size-[104px] shrink-0 rounded-xl ${thumbs[index % thumbs.length]}`}
+        className={`size-[104px] shrink-0 rounded-xl transition-opacity ${
+          thumbs[index % thumbs.length]
+        } ${checked ? 'opacity-75' : ''}`}
         aria-hidden
       />
 
       <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="text-[13.5px] font-semibold tracking-tight text-[var(--ink-900)]">
-              {item.name}
-            </div>
-            <div className="mt-1 text-[11px] text-[var(--ink-400)]">
-              分组：{item.group} · {item.note ?? `启动于 ${item.started_at}`}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-2.5">
+            <Checkbox
+              checked={checked}
+              onChange={onToggle}
+              label={`选择 ${item.name}`}
+              className="mt-[3px]"
+            />
+            <div className="min-w-0">
+              <div className="truncate text-[13.5px] font-semibold tracking-tight text-[var(--ink-900)]">
+                {item.name}
+              </div>
+              <div className="mt-1 truncate text-[11px] text-[var(--ink-400)]">
+                分组：{item.group} · {item.note ?? `启动于 ${item.started_at ?? '—'}`}
+              </div>
             </div>
           </div>
           <span className={`chip ${statusChip[item.status]} gap-1`}>
@@ -282,9 +608,7 @@ function InstanceCard({
             <IconFingerprint size={10} />
             {item.fingerprint}
           </span>
-          {item.status === 'error' ? (
-            <span className="chip bg-rose-50 text-rose-500">{item.note}</span>
-          ) : item.fps != null ? (
+          {running && item.fps != null ? (
             <>
               <span className="flex items-center gap-1 text-[11px] text-[var(--ink-500)]">
                 <IconMonitor size={10} />
@@ -295,30 +619,114 @@ function InstanceCard({
                 {item.latency_ms} ms
               </span>
             </>
+          ) : item.status === 'error' ? (
+            <span className="chip bg-rose-50 text-rose-500">{item.note ?? '会话异常'}</span>
           ) : null}
         </div>
 
         <div className="mt-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button type="button" onClick={onOpen} className="btn-dark !h-7 !px-3 !text-[11.5px]">
-              {primary.icon}
-              {primary.label}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={primary.run}
+              className="btn-dark !h-7 !px-3 !text-[11.5px] disabled:opacity-60"
+            >
+              {busy ? <IconRefresh size={11} /> : primary.icon}
+              {busy ? '处理中…' : primary.label}
             </button>
-            <button type="button" className="btn-ghost !h-7 !px-3 !text-[11.5px]">
-              {secondary}
+            <button
+              type="button"
+              onClick={onConfigure}
+              className="btn-ghost !h-7 !px-3 !text-[11.5px]"
+            >
+              绑定配置
             </button>
           </div>
           <div className="flex items-center gap-1">
-            <button type="button" className="icon-btn size-7 !border-transparent !bg-transparent">
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={running ? '停止实例' : '启动实例'}
+              title={running ? '停止实例' : '启动实例'}
+              onClick={() => onAction(running ? 'stop' : 'start')}
+              className={`icon-btn size-7 !border-transparent !bg-transparent disabled:opacity-50 ${
+                running ? 'text-emerald-600' : 'text-[var(--ink-400)]'
+              }`}
+            >
               <IconPower size={12} />
             </button>
-            <button type="button" className="icon-btn size-7 !border-transparent !bg-transparent">
-              <IconMore size={13} />
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                aria-label="更多操作"
+                onClick={() => setMenu((v) => !v)}
+                className="icon-btn size-7 !border-transparent !bg-transparent"
+              >
+                <IconMore size={13} />
+              </button>
+              {menu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
+                  <div className="absolute right-0 z-20 mt-1 w-[132px] overflow-hidden rounded-xl border border-[var(--line)] bg-white py-1 shadow-[0_12px_32px_-8px_rgba(16,24,40,0.24)]">
+                    <MenuItem
+                      onClick={() => {
+                        setMenu(false)
+                        onAction('restart')
+                      }}
+                      icon={<IconRefresh size={11} />}
+                      label="重启"
+                    />
+                    <MenuItem
+                      onClick={() => {
+                        setMenu(false)
+                        onConfigure()
+                      }}
+                      icon={<IconBolt size={11} />}
+                      label="编辑配置"
+                    />
+                    <MenuItem
+                      onClick={() => {
+                        setMenu(false)
+                        onDelete()
+                      }}
+                      icon={<IconTrash size={11} />}
+                      label="删除"
+                      danger
+                    />
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
     </Card>
+  )
+}
+
+function MenuItem({
+  onClick,
+  icon,
+  label,
+  danger,
+}: {
+  onClick: () => void
+  icon: ReactNode
+  label: string
+  danger?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11.5px] hover:bg-[#f7f7f8] ${
+        danger ? 'text-rose-600' : 'text-[var(--ink-700)]'
+      }`}
+    >
+      <span className={danger ? 'text-rose-500' : 'text-[var(--ink-400)]'}>{icon}</span>
+      {label}
+    </button>
   )
 }
 
@@ -330,19 +738,3 @@ const thumbs = [
   'bg-[linear-gradient(140deg,#7f7a70_0%,#c2bcae_45%,#726a5f_100%)]',
   'bg-[linear-gradient(140deg,#8a7f72_0%,#c9c0b4_50%,#75695c_100%)]',
 ]
-
-const iconTone: Record<string, string> = {
-  emerald: 'bg-emerald-50 text-emerald-500',
-  blue: 'bg-blue-50 text-blue-500',
-  amber: 'bg-amber-50 text-amber-500',
-  rose: 'bg-rose-50 text-rose-500',
-  violet: 'bg-violet-50 text-violet-500',
-  zinc: 'bg-zinc-100 text-zinc-500',
-}
-
-function cardIcon(title: string) {
-  if (title.includes('可调度')) return <IconSliders size={13} />
-  if (title.includes('需处理')) return <IconBolt size={13} />
-  if (title.includes('队列')) return <IconBrowser size={13} />
-  return <IconExpand size={13} />
-}

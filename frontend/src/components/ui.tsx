@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { IconArrowUpRight, IconChevronDown, IconSearch } from './icons'
+import { useEffect, useRef, type ReactNode } from 'react'
+import { IconArrowUpRight, IconCheck, IconChevronDown, IconMinus, IconSearch } from './icons'
 
 /* ── 基础卡片 ─────────────────────────────────────────── */
 export function Card({
@@ -227,6 +227,59 @@ export function HeroBadge({ children }: { children: ReactNode }) {
     <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/80 ring-1 ring-white/10 ring-inset">
       {children}
     </span>
+  )
+}
+
+/* ── 勾选框（自绘，替换浏览器原生控件） ──────────────── */
+export function Checkbox({
+  checked,
+  indeterminate = false,
+  onChange,
+  label,
+  className = '',
+}: {
+  checked: boolean
+  /** 半选：用于「全选」表头 */
+  indeterminate?: boolean
+  onChange: (next: boolean) => void
+  label: string
+  className?: string
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  const mixed = indeterminate && !checked
+  const on = checked || mixed
+
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = mixed
+  }, [mixed])
+
+  return (
+    <label
+      className={`group/cb relative inline-flex size-[18px] shrink-0 cursor-pointer items-center justify-center ${className}`}
+    >
+      <input
+        ref={ref}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={label}
+        className="peer sr-only"
+      />
+      <span
+        aria-hidden
+        className={`flex size-[18px] items-center justify-center rounded-[6px] border transition-all duration-150 group-active/cb:scale-90 peer-focus-visible:ring-2 peer-focus-visible:ring-[#18181b]/20 peer-focus-visible:ring-offset-1 ${
+          on
+            ? 'border-[#18181b] bg-[#18181b] shadow-[0_1px_2px_rgba(16,24,40,0.20)]'
+            : 'border-[#d4d4d8] bg-white shadow-[0_1px_2px_rgba(16,24,40,0.06)] group-hover/cb:border-[#a1a1aa] group-hover/cb:bg-[#fafafa]'
+        }`}
+      >
+        {mixed ? (
+          <IconMinus size={11} className="text-white" />
+        ) : checked ? (
+          <IconCheck size={11} className="text-white" />
+        ) : null}
+      </span>
+    </label>
   )
 }
 

@@ -10,6 +10,7 @@ import {
   IconMail,
   IconRefresh,
   IconShare,
+  IconShield,
 } from '@/components/icons'
 
 const formatClock = (total: number) => {
@@ -24,6 +25,8 @@ export default function ResetEmailSentPage() {
   const email = params.get('email') ?? 'lin.zhiyuan@webweaver.io'
   const initial = Number(params.get('cooldown') ?? 1752)
 
+  // 本地联调时后端会把重置令牌直接返回来，这里接住并允许一键跳到重置页
+  const [token, setToken] = useState(params.get('token') ?? '')
   const [remaining, setRemaining] = useState(Number.isFinite(initial) ? initial : 1752)
   const [resending, setResending] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -42,7 +45,9 @@ export default function ResetEmailSentPage() {
     try {
       const res = await endpoints.resendReset({ email })
       setNotice(res.message)
-      setRemaining(res.cooldown)
+      setRemaining(res.cooldown ?? 0)
+      // 重发会作废旧链接，令牌跟着换新
+      if (res.reset_token) setToken(res.reset_token)
     } catch (err) {
       setNotice(err instanceof Error ? err.message : '重发失败，请稍后重试')
     } finally {
@@ -91,10 +96,20 @@ export default function ResetEmailSentPage() {
 
       {notice && <p className="mt-2 text-center text-[11px] text-emerald-600">{notice}</p>}
 
-      <a href="mailto:" className="btn-dark mt-4 !h-11 w-full !text-[13px]">
-        <IconShare size={14} />
-        打开邮箱查看
-      </a>
+      {token ? (
+        <Link
+          to={`/reset-password?${new URLSearchParams({ email, token }).toString()}`}
+          className="btn-dark mt-4 !h-11 w-full !text-[13px]"
+        >
+          <IconShield size={14} />
+          本地调试：直接打开重置页
+        </Link>
+      ) : (
+        <a href="mailto:" className="btn-dark mt-4 !h-11 w-full !text-[13px]">
+          <IconShare size={14} />
+          打开邮箱查看
+        </a>
+      )}
 
       <div className="mt-3 grid grid-cols-2 gap-3">
         <Link to="/" className="btn-ghost !h-11 w-full !text-[12.5px]">

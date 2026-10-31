@@ -6,7 +6,11 @@ type State<T> =
   | { status: 'error'; data: null; error: string }
 
 /**
- * 轻量数据请求 hook：组件挂载时拉取，支持手动刷新。
+ * 轻量数据请求 hook：组件挂载时拉取，支持手动刷新与静默刷新。
+ *
+ * ``reload`` 会回到 loading 态（首屏、切换筛选、失败重试都用它）；
+ * ``refresh`` 保留当前数据，成功后才替换——总览页 30 秒轮询一次，
+ * 用 reload 会让整页每半分钟闪一次骨架屏。
  */
 export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   const [state, setState] = useState<State<T>>({ status: 'loading', data: null, error: null })
@@ -35,7 +39,14 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
     }
   }, [run])
 
+  const refresh = useCallback(() => {
+    // 静默刷新失败就保留旧数据：轮询偶发超时不该把已经看到的页面清空
+    run()
+      .then((data) => setState({ status: 'success', data, error: null }))
+      .catch(() => undefined)
+  }, [run])
+
   useEffect(load, [load])
 
-  return { ...state, reload: load }
+  return { ...state, reload: load, refresh }
 }

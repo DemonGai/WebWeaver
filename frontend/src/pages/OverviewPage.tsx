@@ -1,3 +1,5 @@
+import { useCallback, useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
 import { PageShell } from '@/components/Layout'
@@ -7,9 +9,9 @@ import {
   HeroBadge,
   HeroCard,
   OutlineChip,
+  PillTabs,
   ProgressBar,
   SectionHeader,
-  SelectBox,
   StatCard,
   StatusDot,
   type Tone,
@@ -20,49 +22,137 @@ import {
   IconArrowUpRight,
   IconBolt,
   IconBrowser,
-  IconClock,
   IconDownload,
   IconExpand,
   IconFingerprint,
   IconGlobe,
   IconMonitor,
+  IconPause,
   IconPlus,
-  IconPower,
+  IconRefresh,
   IconShield,
-  IconSliders,
+  IconTrend,
   IconUser,
 } from '@/components/icons'
-import type { InstanceStatus } from '@/types/domain'
+import type { HealthPart, InstanceStatus, OverviewPayload, OverviewRange } from '@/types/domain'
 
 const statusMeta: Record<InstanceStatus, { label: string; tone: Tone }> = {
   running: { label: '运行中', tone: 'emerald' },
-  idle: { label: '空间', tone: 'blue' },
+  idle: { label: '空闲', tone: 'blue' },
   error: { label: '异常', tone: 'rose' },
   stopped: { label: '已停止', tone: 'zinc' },
   queued: { label: '排队中', tone: 'amber' },
 }
 
-const toneOf: Record<string, Tone> = {
-  emerald: 'emerald',
-  blue: 'blue',
-  rose: 'rose',
-  amber: 'amber',
-  violet: 'violet',
-  zinc: 'zinc',
+/** 深色主卡里的槽位条：一眼看出「哪几台在跑、哪几台占着位置」。 */
+const laneBg: Record<InstanceStatus, string> = {
+  running: 'bg-blue-400',
+  idle: 'bg-white/30',
+  error: 'bg-rose-400',
+  stopped: 'bg-white/10',
+  queued: 'bg-amber-400',
 }
 
-const eventTone: Record<string, Tone> = {
-  emerald: 'emerald',
-  violet: 'violet',
-  amber: 'amber',
-  rose: 'rose',
-  blue: 'blue',
+const TONES: Tone[] = ['emerald', 'blue', 'rose', 'amber', 'violet', 'zinc', 'sky']
+
+const asTone = (value: string | undefined, fallback: Tone = 'zinc'): Tone =>
+  TONES.includes(value as Tone) ? (value as Tone) : fallback
+
+/** 健康分越高越绿，掉到 60 以下必须是红色的——徽标不能永远绿着。 */
+const healthTone = (score: number): Tone =>
+  score >= 90 ? 'emerald' : score >= 75 ? 'blue' : score >= 60 ? 'amber' : 'rose'
+
+// 深色主卡上的文字色，比常规 tone 亮一档才看得清
+const healthText: Record<Tone, string> = {
+  emerald: 'text-emerald-300',
+  blue: 'text-sky-300',
+  amber: 'text-amber-300',
+  rose: 'text-rose-300',
+  violet: 'text-violet-300',
+  zinc: 'text-white/70',
+  sky: 'text-sky-300',
 }
+
+const RANGE_LABEL: Record<OverviewRange, string> = {
+  '24h': '最近 24 小时',
+  '7d': '最近 7 天',
+  '30d': '最近 30 天',
+}
+
+// 每张配额卡直达对应的维护页——首页只做导航，维护动作都在各自列表页完成
+const CARD_HREF: Record<string, string> = {
+  accounts: '/accounts',
+  ip: '/ip-pool',
+  fingerprints: '/fingerprints',
+}
+
+const REFRESH_MS = 30_000
 
 export default function OverviewPage() {
-  const { data, status, error, reload } = useApi(endpoints.overview, [])
+  const navigate = useNavigate()
+  const [range, setRange] = useState<OverviewRange>('7d')
+  const [auto, setAuto] = useState(true)
+  const [statusFilter, setStatusFilter] = useState('all')
 
-  if (status === 'loading') return <PageShell><Loading /></PageShell>
+  const { data, status, error, reload, refresh } = useApi(
+    () => endpoints.overview(range),
+    [range],
+  )
+
+  // 轮询用静默刷新：整页每 30 秒闪一次骨架屏比不刷新更糟
+  useEffect(() => {
+    if (!auto) return
+    const timer = window.setInterval(refresh, REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [auto, refresh])
+
+  const exportCsv = useCallback((payload: OverviewPayload) => {
+    const header = [
+      '实例名称',
+      '状态',
+      '分组',
+      '绑定账号',
+      '出口 IP',
+      '地区',
+      '指纹模板',
+      '延迟(ms)',
+      '帧率(fps)',
+      '启动时间',
+      '备注',
+    ]
+    const rows = payload.instances.map((it) => [
+      it.name,
+      statusMeta[it.status].label,
+      it.group,
+      it.account,
+      it.ip,
+      it.region,
+      it.fingerprint,
+      it.latency_ms ?? '',
+      it.fps ?? '',
+      it.started_at ?? '',
+      it.note ?? '',
+    ])
+    const csv = [header, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\r\n')
+    // 带 BOM，Excel 打开 UTF-8 中文才不乱码
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T-]/g, '')
+    link.href = url
+    link.download = `webweaver-overview-${stamp}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }, [])
+
+  if (status === 'loading')
+    return (
+      <PageShell>
+        <Loading />
+      </PageShell>
+    )
   if (status === 'error')
     return (
       <PageShell>
@@ -71,47 +161,86 @@ export default function OverviewPage() {
     )
   if (!data) return null
 
-  const { cluster, pool_status, load, cards, instances, events, trend, trend_stats, novnc_preview } =
-    data
+  const { cluster, pool_status, health_parts, cards, instances, events, trend, trend_stats } = data
+
+  const filtered =
+    statusFilter === 'all' ? instances : instances.filter((i) => i.status === statusFilter)
+  const visible = filtered.slice(0, 6)
+  const emptyHint =
+    statusFilter === 'all'
+      ? '当前还没有任何实例'
+      : `当前没有「${statusMeta[statusFilter as InstanceStatus]?.label ?? '该'}」状态的实例`
+  const counts = instances.reduce<Record<string, number>>((acc, it) => {
+    acc[it.status] = (acc[it.status] ?? 0) + 1
+    return acc
+  }, {})
 
   return (
     <PageShell>
-      <div className="mb-5 flex items-start justify-between">
+      {/* ── 页头：标题 + 时间窗 + 动作 ────────────────────── */}
+      <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-[26px] leading-tight font-semibold tracking-tight">集群总览</h1>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-600">
-              <span className="size-[5px] rounded-full bg-emerald-500" />
-              实时同步 · {cluster.updated_seconds} 秒前
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                auto ? 'bg-emerald-50 text-emerald-600' : 'bg-zinc-100 text-zinc-500'
+              }`}
+            >
+              <span
+                className={`size-[5px] rounded-full ${auto ? 'animate-pulse bg-emerald-500' : 'bg-zinc-400'}`}
+              />
+              {auto ? '实时同步 · 每 30 秒' : '自动同步已暂停'}
             </span>
           </div>
           <p className="mt-1.5 text-[12.5px] text-[var(--ink-500)]">
             管理 {cluster.total} 台浏览器实例 · {cluster.accounts_total} 个账号 ·{' '}
-            {cluster.ip_total} 个出口 IP · 24 套指纹模板
+            {cluster.ip_total} 个出口 IP
           </p>
         </div>
+
         <div className="flex items-center gap-2">
-          <SelectBox label="最近 24 小时" />
-          <button type="button" className="btn-ghost">
+          <PillTabs
+            items={[
+              { key: '24h', label: '24 小时' },
+              { key: '7d', label: '7 天' },
+              { key: '30d', label: '30 天' },
+            ]}
+            active={range}
+            onSelect={(key) => setRange(key as OverviewRange)}
+          />
+          <button
+            type="button"
+            onClick={() => setAuto((v) => !v)}
+            className="btn-ghost"
+            title={auto ? '每 30 秒自动刷新，点击暂停' : '已暂停自动刷新，点击恢复'}
+          >
+            {auto ? <IconPause size={13} /> : <IconRefresh size={13} />}
+            {auto ? '自动刷新' : '已暂停'}
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => exportCsv(data)}>
             <IconDownload size={14} />
             导出报表
           </button>
-          <button type="button" className="btn-dark">
+          <button type="button" className="btn-dark" onClick={() => navigate('/browsers')}>
             <IconPlus size={14} />
             新建实例
           </button>
         </div>
       </div>
 
-      {/* 第一行：集群总览 + 池状态 + 资源负载 */}
+      {/* ── 主视觉：集群态势（大卡）+ 池状态 + 健康构成 ──── */}
       <div className="grid grid-cols-12 gap-4">
         <HeroCard
-          className="col-span-5"
+          className="col-span-6"
           eyebrow="浏览器集群运行总览"
           badge={
             <HeroBadge>
               <IconShield size={11} />
-              集群健康 {cluster.health}%
+              集群健康
+              <span className={`ml-0.5 font-semibold ${healthText[healthTone(cluster.health)]}`}>
+                {cluster.health}%
+              </span>
             </HeroBadge>
           }
           value={cluster.online}
@@ -120,7 +249,7 @@ export default function OverviewPage() {
             <div className="grid grid-cols-4 divide-x divide-white/10">
               {[
                 { k: '账号在线', v: `${cluster.accounts_used} / ${cluster.accounts_total}` },
-                { k: 'IP 可用', v: `${cluster.ip_used} / ${cluster.ip_total}` },
+                { k: '出口占用', v: `${cluster.ip_used} / ${cluster.ip_total}` },
                 { k: '平均响应', v: `${cluster.avg_latency_ms} ms` },
                 { k: 'noVNC 帧率', v: `${cluster.novnc_fps} fps` },
               ].map((m) => (
@@ -132,115 +261,153 @@ export default function OverviewPage() {
             </div>
           }
         >
-          <div className="mt-5 flex items-center gap-[7px]">
-            {Array.from({ length: 16 }).map((_, i) => {
-              const hi = [3, 5, 9, 12, 14].includes(i)
-              return (
+          <div className="mt-5">
+            <div className="flex items-center gap-[7px]">
+              {instances.map((it) => (
                 <span
-                  key={i}
-                  className={`h-[22px] flex-1 rounded-full ${
-                    hi ? 'bg-blue-400' : 'bg-white/15'
-                  }`}
+                  key={it.id}
+                  title={`${it.name} · ${statusMeta[it.status].label}`}
+                  className={`h-[22px] flex-1 rounded-full transition-opacity hover:opacity-70 ${laneBg[it.status]}`}
                 />
-              )
-            })}
+              ))}
+              {/* 槽位不足 16 时补空位，让「容量」这件事有视觉上的固定尺寸 */}
+              {Array.from({ length: Math.max(16 - instances.length, 0) }).map((_, i) => (
+                <span key={`slot-${i}`} className="h-[22px] flex-1 rounded-full bg-white/[0.07]" />
+              ))}
+            </div>
+            <div className="mt-2.5 flex items-center gap-4 text-[10px] text-white/45">
+              {(['running', 'idle', 'queued', 'error', 'stopped'] as InstanceStatus[])
+                .filter((s) => counts[s])
+                .map((s) => (
+                  <span key={s} className="flex items-center gap-1.5">
+                    <span className={`size-[5px] rounded-full ${laneBg[s]}`} />
+                    {statusMeta[s].label} {counts[s]}
+                  </span>
+                ))}
+            </div>
           </div>
         </HeroCard>
 
-        <Card className="col-span-4 p-5">
+        <Card className="col-span-3 p-5">
           <SectionHeader
             icon={<IconBrowser size={15} />}
-            title="浏览器池状态"
+            title="实例池状态"
             extra={
-              <span className="flex items-center gap-1 text-[11px] text-[var(--ink-400)]">
-                实时
+              <Link
+                to="/browsers"
+                className="flex items-center gap-1 text-[11px] text-[var(--ink-400)] hover:text-[var(--ink-900)]"
+              >
+                详情
                 <IconArrowUpRight size={12} />
-              </span>
+              </Link>
             }
           />
           <div className="mt-4 space-y-3.5">
             {pool_status.map((p) => {
               const tone = statusMeta[p.status].tone
               return (
-                <div key={p.label}>
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter(p.status)
+                    document.getElementById('instance-board')?.scrollIntoView({ behavior: 'smooth' })
+                  }}
+                  className="block w-full text-left"
+                >
                   <div className="flex items-center justify-between">
                     <StatusDot tone={tone} label={p.label} />
                     <span className="tnum text-[13px] font-semibold">{p.value}</span>
                   </div>
                   <ProgressBar
-                    value={(p.value / cluster.total) * 100}
+                    value={cluster.total ? (p.value / cluster.total) * 100 : 0}
                     tone={tone}
                     className="mt-2"
                   />
-                </div>
+                </button>
               )
             })}
           </div>
         </Card>
 
-        <Card className="col-span-3 flex flex-col p-5">
+        <Card className="col-span-3 p-5">
           <SectionHeader
-            icon={<IconActivity size={15} />}
-            title="资源负载"
-            extra={<span className="text-[11px] text-[var(--ink-400)]">实时</span>}
+            icon={<IconShield size={15} />}
+            title="健康分构成"
+            extra={<span className="text-[11px] text-[var(--ink-400)]">加权总分</span>}
           />
           <div className="mt-4 space-y-3">
-            <LoadRow label="CPU 峰值" value={load.cpu} tone="violet" />
-            <LoadRow label="内存占用" value={load.memory} tone="amber" />
-            <LoadRow label="出口带宽" value={load.bandwidth} tone="emerald" />
+            {health_parts.map((p) => (
+              <HealthRow key={p.key} part={p} />
+            ))}
           </div>
-          <div className="mt-auto grid grid-cols-2 gap-2 pt-4">
-            <MiniStat label="断连心率" value={String(load.disconnect_minutes)} unit="分钟" />
-            <MiniStat label="自动重连" value={String(load.reconnects)} unit="次" />
+          <div className="mt-3.5 rounded-xl bg-[#fafafa] px-3 py-2 text-[10.5px] leading-relaxed text-[var(--ink-500)]">
+            总分 = 实例 45% + 出口 25% + 账号 20% + 指纹 10%，任一项掉分都会拉低集群健康度。
           </div>
         </Card>
       </div>
 
-      {/* 第二行：四个指标卡 */}
-      <div className="mt-4 grid grid-cols-4 gap-4">
-        {cards.map((c) => (
-          <StatCard
-            key={c.key}
-            icon={cardIcon(c.key)}
-            tone={toneOf[c.tone] ?? 'zinc'}
-            title={c.title}
-            value={c.value}
-            unit={c.unit}
-            hint={c.hint}
-            progress={c.progress}
-          />
-        ))}
+      {/* ── 次一级：基础设施配额（每张卡右上角直达对应维护页） ── */}
+      <Divider label="资源与配额" />
+      <div className="grid grid-cols-3 gap-4">
+        {cards.map((c) => {
+          const href = CARD_HREF[c.key] ?? '/browsers'
+          return (
+            <StatCard
+              key={c.key}
+              icon={cardIcon(c.key)}
+              tone={asTone(c.tone)}
+              title={c.title}
+              value={c.value}
+              unit={c.unit}
+              hint={c.hint}
+              progress={c.progress}
+              action={
+                <Link
+                  to={href}
+                  className="flex items-center gap-1 text-[11px] text-[var(--ink-400)] transition-colors hover:text-[var(--ink-900)]"
+                >
+                  详情
+                  <IconArrowUpRight size={12} />
+                </Link>
+              }
+            />
+          )
+        })}
       </div>
 
-      {/* 第三行：活跃实例 + 实时事件 */}
-      <div className="mt-4 grid grid-cols-12 gap-4">
+      {/* ── 明细：活跃实例 + 审计事件流 ───────────────────── */}
+      <Divider label="运行明细" />
+      <div className="grid grid-cols-12 gap-4">
         <Card className="col-span-8 overflow-hidden">
-          <div className="flex items-center justify-between px-5 pt-5 pb-3">
+          <div id="instance-board" className="flex items-center justify-between px-5 pt-5 pb-3">
             <SectionHeader icon={<IconMonitor size={15} />} title="活跃实例" />
-            <div className="flex items-center gap-2">
-              <span className="tnum text-[11px] text-[var(--ink-400)]">
-                {cluster.online} 运行中
-              </span>
-              <SelectBox label="全部状态" />
-              <button type="button" className="icon-btn">
-                <IconSliders size={13} />
-              </button>
-            </div>
+            <PillTabs
+              items={[
+                { key: 'all', label: '全部', count: instances.length },
+                { key: 'running', label: '运行中', count: counts.running ?? 0, tone: 'emerald' },
+                { key: 'idle', label: '空闲', count: counts.idle ?? 0, tone: 'blue' },
+                { key: 'error', label: '异常', count: counts.error ?? 0, tone: 'rose' },
+                { key: 'stopped', label: '已停止', count: counts.stopped ?? 0 },
+              ]}
+              active={statusFilter}
+              onSelect={setStatusFilter}
+            />
           </div>
 
           <table className="w-full">
             <thead>
               <tr className="border-y border-[var(--line)] bg-[#fcfcfd]">
-                <th className="table-th w-[24%]">实例名称</th>
+                <th className="table-th w-[26%]">实例名称</th>
                 <th className="table-th w-[12%]">状态</th>
                 <th className="table-th w-[18%]">绑定账号</th>
-                <th className="table-th w-[16%]">出口 IP</th>
-                <th className="table-th w-[18%]">指纹模板</th>
+                <th className="table-th w-[17%]">出口 IP</th>
+                <th className="table-th w-[15%]">指纹模板</th>
                 <th className="table-th w-[12%] text-right">操作</th>
               </tr>
             </thead>
             <tbody>
-              {instances.map((it) => {
+              {visible.map((it) => {
                 const meta = statusMeta[it.status]
                 return (
                   <tr key={it.id} className="border-b border-[var(--line)] last:border-0">
@@ -249,7 +416,10 @@ export default function OverviewPage() {
                         <span className="text-[var(--ink-400)]">
                           <IconBrowser size={13} />
                         </span>
-                        <span className="font-medium text-[var(--ink-900)]">{it.name}</span>
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-[var(--ink-900)]">{it.name}</div>
+                          <div className="text-[10.5px] text-[var(--ink-400)]">{it.group}</div>
+                        </div>
                       </div>
                     </td>
                     <td className="table-td">
@@ -260,7 +430,7 @@ export default function OverviewPage() {
                         <span className="flex size-4 items-center justify-center rounded bg-blue-50 text-[9px] font-semibold text-blue-500">
                           {it.account.slice(0, 1).toUpperCase()}
                         </span>
-                        {it.account}
+                        <span className="truncate">{it.account}</span>
                       </div>
                     </td>
                     <td className="table-td">
@@ -272,39 +442,57 @@ export default function OverviewPage() {
                     </td>
                     <td className="table-td">
                       <div className="flex items-center justify-end gap-1.5">
-                        <button type="button" className="btn-dark !h-7 !px-2.5 !text-[11.5px]">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/novnc/${it.id}`)}
+                          className="btn-dark !h-7 !px-2.5 !text-[11.5px]"
+                          title={`查看 ${it.name} 的实时画面`}
+                        >
                           <IconMonitor size={11} />
                           noVNC
                         </button>
-                        <button type="button" className="icon-btn size-7">
-                          {it.status === 'error' ? <IconPower size={12} /> : <IconExpand size={12} />}
+                        <button
+                          type="button"
+                          onClick={() => navigate('/browsers')}
+                          className="icon-btn size-7"
+                          title="在浏览器池中查看"
+                        >
+                          <IconExpand size={12} />
                         </button>
                       </div>
                     </td>
                   </tr>
                 )
               })}
+              {visible.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-5 py-10 text-center text-[12px] text-[var(--ink-400)]">
+                    {emptyHint}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
 
           <div className="flex items-center justify-between px-5 py-3">
             <span className="text-[11.5px] text-[var(--ink-400)]">
-              显示 5 / {cluster.online} 台运行中实例
+              显示 {visible.length} / {filtered.length} 台
+              {statusFilter !== 'all' && `（共 ${instances.length} 台实例）`}
             </span>
-            <a
-              href="/browsers"
+            <Link
+              to="/browsers"
               className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--ink-700)] hover:text-[var(--ink-900)]"
             >
               进入浏览器池
               <IconArrowRight size={12} />
-            </a>
+            </Link>
           </div>
         </Card>
 
         <Card className="col-span-4 flex flex-col p-5">
           <SectionHeader
             icon={<IconBolt size={15} />}
-            title="实时事件"
+            title="最新操作"
             extra={
               <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-[3px] text-[10px] font-semibold text-rose-500">
                 <span className="size-[4px] rounded-full bg-rose-500" />
@@ -317,9 +505,7 @@ export default function OverviewPage() {
             {events.map((e) => (
               <div key={e.id} className="flex gap-2.5">
                 <span
-                  className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${
-                    dotBg[eventTone[e.tone] ?? 'zinc']
-                  }`}
+                  className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${dotBg[asTone(e.tone)]}`}
                 >
                   <span className="size-[5px] rounded-full bg-current opacity-70" />
                 </span>
@@ -328,93 +514,76 @@ export default function OverviewPage() {
                     {e.title}
                   </div>
                   {e.detail && (
-                    <div className="mt-0.5 text-[11px] text-[var(--ink-500)]">{e.detail}</div>
+                    <div className="mt-0.5 line-clamp-2 text-[11px] text-[var(--ink-500)]">
+                      {e.detail}
+                    </div>
                   )}
                   <div className="mt-1.5 flex items-center gap-2">
-                    <span className={`chip ${badgeTone[eventTone[e.tone] ?? 'zinc']}`}>
-                      {e.tag}
-                    </span>
+                    <span className={`chip ${badgeTone[asTone(e.tone)]}`}>{e.tag}</span>
                     <span className="text-[10.5px] text-[var(--ink-400)]">{e.time}</span>
                   </div>
                 </div>
               </div>
             ))}
+            {events.length === 0 && (
+              <div className="flex h-full flex-col items-center justify-center gap-2 py-8 text-center">
+                <span className="text-[var(--ink-400)]">
+                  <IconActivity size={20} />
+                </span>
+                <p className="text-[12px] text-[var(--ink-400)]">暂无操作记录</p>
+              </div>
+            )}
           </div>
 
           <div className="mt-4 flex items-center justify-between border-t border-[var(--line)] pt-3">
-            <span className="text-[11px] text-[var(--ink-400)]">今日共 1,286 事件</span>
-            <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--ink-700)]">
+            <span className="text-[11px] text-[var(--ink-400)]">来自审计日志 · 最近 5 条</span>
+            <Link
+              to="/settings/audit-logs"
+              className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--ink-700)] hover:text-[var(--ink-900)]"
+            >
               全部日志
               <IconArrowRight size={12} />
-            </span>
+            </Link>
           </div>
         </Card>
       </div>
 
-      {/* 第四行：noVNC 预览 + 资源趋势 */}
-      <div className="mt-4 grid grid-cols-12 gap-4">
-        <Card className="col-span-7 p-5">
+      {/* ── 底部：操作趋势（整行，图 9 列 + 统计 3 列） ────── */}
+      <div className="mt-4">
+        <Card className="p-5">
           <SectionHeader
-            icon={<IconMonitor size={15} />}
-            title="noVNC 实时画面"
+            icon={<IconTrend size={15} />}
+            title="集群操作趋势"
             extra={
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-[var(--ink-500)]">
-                  {novnc_preview.instance} · {novnc_preview.fps} fps ·{' '}
-                  {novnc_preview.latency_ms} ms
-                </span>
-                <button type="button" className="btn-dark !h-7 !px-2.5 !text-[11.5px]">
-                  <IconExpand size={11} />
-                  接入查看
-                </button>
-              </div>
+              <span className="text-[10.5px] text-[var(--ink-400)]">
+                {RANGE_LABEL[range]} · 按审计日志统计
+              </span>
             }
           />
-
-          <div className="mt-4 overflow-hidden rounded-xl border border-[var(--line)]">
-            <div className="flex items-center gap-2 border-b border-[var(--line)] bg-[#fafafa] px-3 py-2">
-              <div className="flex items-center gap-1.5">
-                <span className="size-2 rounded-full bg-rose-400" />
-                <span className="size-2 rounded-full bg-amber-400" />
-                <span className="size-2 rounded-full bg-emerald-400" />
-              </div>
-              <div className="ml-2 flex h-5 flex-1 items-center gap-1.5 rounded-full bg-white px-2.5 text-[10px] text-[var(--ink-400)] ring-1 ring-[var(--line)] ring-inset">
-                <IconShield size={9} className="text-emerald-500" />
-                {novnc_preview.url}
-              </div>
+          <div className="mt-3 grid grid-cols-12 items-center gap-6">
+            <div className="col-span-9">
+              <AreaChart
+                primary={trend.series}
+                secondary={trend.companion}
+                labels={trend.labels}
+                height={150}
+                primaryLabel="操作数"
+                secondaryLabel="失败数"
+              />
             </div>
-            <ScreenPlaceholder />
-          </div>
-        </Card>
-
-        <Card className="col-span-5 p-5">
-          <SectionHeader
-            icon={<IconActivity size={15} />}
-            title="集群资源趋势"
-            extra={<span className="text-[10.5px] text-[var(--ink-400)]">最近 24 小时 · 5 分钟粒度</span>}
-          />
-          <div className="mt-3">
-            <AreaChart
-              primary={trend.series}
-              secondary={trend.companion}
-              labels={trend.labels}
-              height={132}
-              primaryLabel="并发实例"
-              secondaryLabel="可用 IP"
-            />
-          </div>
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {trend_stats.map((s) => (
-              <div key={s.label} className="rounded-xl bg-[#fafafa] px-3 py-2.5">
-                <div className="text-[10.5px] text-[var(--ink-500)]">{s.label}</div>
-                <div className="tnum mt-1 text-[15px] font-semibold">
-                  {s.value}
-                  <span className="ml-0.5 text-[10.5px] font-normal text-[var(--ink-400)]">
-                    {s.unit}
-                  </span>
+            <div className="col-span-3 space-y-2.5">
+              {trend_stats.map((s) => (
+                <div key={s.label} className="rounded-xl bg-[#fafafa] px-3.5 py-3">
+                  <div className="text-[10.5px] text-[var(--ink-500)]">{s.label}</div>
+                  <div className="tnum mt-1 text-[17px] font-semibold">
+                    {s.value}
+                    <span className="ml-0.5 text-[10.5px] font-normal text-[var(--ink-400)]">
+                      {s.unit}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </Card>
       </div>
@@ -443,26 +612,26 @@ const badgeTone: Record<Tone, string> = {
   sky: 'bg-sky-50 text-sky-600',
 }
 
-function LoadRow({ label, value, tone }: { label: string; value: number; tone: Tone }) {
+function HealthRow({ part }: { part: HealthPart }) {
   return (
     <div>
-      <div className="flex items-center justify-between text-[11.5px]">
-        <span className="text-[var(--ink-500)]">{label}</span>
-        <span className="tnum font-semibold">{value}%</span>
+      <div className="flex items-baseline justify-between text-[11.5px]">
+        <span className="text-[var(--ink-500)]">
+          {part.label}
+          <span className="ml-1 text-[10px] text-[var(--ink-400)]">{part.weight}%</span>
+        </span>
+        <span className="tnum font-semibold">{part.score}%</span>
       </div>
-      <ProgressBar value={value} tone={tone} className="mt-1.5" height={4} />
+      <ProgressBar value={part.score} tone={asTone(part.tone)} className="mt-1.5" height={4} />
     </div>
   )
 }
 
-function MiniStat({ label, value, unit }: { label: string; value: string; unit: string }) {
+function Divider({ label }: { label: string }) {
   return (
-    <div className="rounded-xl bg-[#fafafa] px-2.5 py-2">
-      <div className="text-[10px] text-[var(--ink-500)]">{label}</div>
-      <div className="tnum mt-0.5 text-[13px] font-semibold">
-        {value}
-        <span className="ml-0.5 text-[10px] font-normal text-[var(--ink-400)]">{unit}</span>
-      </div>
+    <div className="mt-6 mb-3 flex items-center gap-3">
+      <span className="text-[11px] font-medium tracking-wide text-[var(--ink-400)]">{label}</span>
+      <span className="h-px flex-1 bg-[var(--line)]" />
     </div>
   )
 }
@@ -472,31 +641,8 @@ function cardIcon(key: string) {
     accounts: <IconUser size={13} />,
     ip: <IconGlobe size={13} />,
     fingerprints: <IconFingerprint size={13} />,
-    tasks: <IconClock size={13} />,
   }
   return map[key] ?? <IconUser size={13} />
-}
-
-function ScreenPlaceholder() {
-  return (
-    <div className="relative h-[248px] w-full bg-[linear-gradient(120deg,#6b5e52_0%,#8d7f70_38%,#c9c4bd_62%,#9a8f84_100%)]">
-      <div className="absolute inset-0 bg-[radial-gradient(120%_90%_at_18%_10%,rgba(255,255,255,0.45),transparent_55%)]" />
-      <div className="absolute top-6 left-8 h-24 w-28 rounded-sm bg-white/35 blur-[1px]" />
-      <div className="absolute bottom-8 left-1/3 h-16 w-24 rounded-md bg-[#8a4b2a]/50" />
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/35 px-3 py-1.5 text-[9.5px] text-white/80 backdrop-blur-sm">
-        <div className="flex items-center gap-3">
-          <span>32 fps</span>
-          <span>48 ms</span>
-          <span>WebSocket 已加密</span>
-          <span>会话 01:12:48</span>
-        </div>
-        <span className="flex items-center gap-1">
-          画质：高清
-          <IconSliders size={9} />
-        </span>
-      </div>
-    </div>
-  )
 }
 
 export function Loading() {

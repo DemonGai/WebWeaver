@@ -60,12 +60,23 @@ export interface TrendPoint {
   companion: number[]
 }
 
+export interface HealthPart {
+  key: string
+  label: string
+  score: number
+  weight: number
+  detail: string
+  tone: string
+}
+
+export type OverviewRange = '24h' | '7d' | '30d'
+
 export interface OverviewPayload {
+  range: OverviewRange
   cluster: {
     total: number
     online: number
     health: number
-    delta: number
     updated_seconds: number
     accounts_used: number
     accounts_total: number
@@ -74,14 +85,8 @@ export interface OverviewPayload {
     avg_latency_ms: number
     novnc_fps: number
   }
+  health_parts: HealthPart[]
   pool_status: { label: string; value: number; status: InstanceStatus }[]
-  load: {
-    cpu: number
-    memory: number
-    bandwidth: number
-    disconnect_minutes: number
-    reconnects: number
-  }
   cards: {
     key: string
     title: string
@@ -95,12 +100,6 @@ export interface OverviewPayload {
   events: ClusterEvent[]
   trend: TrendPoint
   trend_stats: { label: string; value: string; unit: string }[]
-  novnc_preview: {
-    instance: string
-    url: string
-    fps: number
-    latency_ms: number
-  }
 }
 
 export interface BrowserPoolPayload {
@@ -108,6 +107,88 @@ export interface BrowserPoolPayload {
   cards: { title: string; value: number; hint: string; tone: string; tag: string }[]
   instances: InstanceSummary[]
   filters: { key: string; label: string; count: number }[]
+}
+
+/* ── 浏览器池写操作 ───────────────────────────────────── */
+export interface BrowserOption {
+  id: string
+  label: string
+  hint: string
+  disabled: boolean
+}
+
+export interface BrowserOptions {
+  groups: BrowserOption[]
+  kernels: BrowserOption[]
+  /** 内核 id → 磁盘上已下载的版本（新到旧） */
+  kernel_versions: Record<string, string[]>
+  accounts: BrowserOption[]
+  ips: BrowserOption[]
+  fingerprints: BrowserOption[]
+}
+
+export interface BrowserDetail {
+  id: string
+  name: string
+  status: InstanceStatus
+  group_id: string | null
+  group: string
+  kernel_id: string | null
+  kernel: string
+  kernel_version: string | null
+  account_id: string | null
+  account: string
+  ip_id: string | null
+  ip: string
+  ip_mode: 'proxy' | 'direct'
+  region: string
+  fingerprint_id: string | null
+  fingerprint: string
+  fingerprint_mode: 'template' | 'default'
+  cdp_url: string | null
+  vnc_url: string | null
+  vnc_port: number | null
+  fps: number | null
+  latency_ms: number | null
+  started_at: string | null
+  last_active_at: string | null
+  created_at: string
+  updated_at: string
+  note: string | null
+}
+
+export type BrowserActionName = 'start' | 'stop' | 'restart'
+
+export interface BrowserMutationResult {
+  ok: boolean
+  message: string
+}
+
+export interface BrowserActionItem {
+  id: string
+  name: string
+  ok: boolean
+  status: string
+  message: string
+}
+
+export interface BrowserBatchResult {
+  ok: boolean
+  action: string
+  succeeded: number
+  failed: number
+  items: BrowserActionItem[]
+}
+
+export interface BrowserFormValues {
+  name?: string
+  group_id?: string | null
+  kernel_id?: string | null
+  kernel_version?: string | null
+  account_id?: string | null
+  ip_id?: string | null
+  fingerprint_id?: string | null
+  note?: string | null
 }
 
 export interface AccountPoolPayload {
@@ -152,7 +233,9 @@ export interface NoVncPayload {
 }
 
 /* ── 指纹库 ───────────────────────────────────────────── */
-export type PlatformFamily = 'windows' | 'macos' | 'mobile'
+/** 与后端 ``PlatformFamily`` 枚举一一对应，多一个都会在渲染时取不到样式。
+ *  「移动」只是筛选分组，不是平台族本身：android / ios 都算移动。 */
+export type PlatformFamily = 'windows' | 'macos' | 'linux' | 'android' | 'ios'
 
 export interface FingerprintTemplate {
   id: string
@@ -202,129 +285,126 @@ export interface Captcha {
   expires_in: number
 }
 
-export interface ForgotPasswordResponse {
-  ok: boolean
-  email: string
-  expires_in: number
-  cooldown: number
-  message: string
-}
-
-export interface ResendResponse {
-  ok: boolean
-  cooldown: number
-  message: string
-}
-
 export interface PasswordRule {
   key: string
   label: string
   passed: boolean
 }
 
-export interface ResetPasswordResponse {
+/**
+ * 认证统一响应（对应后端 schemas/auth.py::AuthResponse）。
+ * 单入口一个信封，所以除了 ok/action/message 之外都是按动作可选的字段：
+ * 登录 / 注册读 token 与 user，找回密码读 email / cooldown，
+ * 重置密码读 checks / strength / revoked_sessions。
+ */
+export interface AuthResponse {
   ok: boolean
-  checks: PasswordRule[]
-  strength: number
-  revoked_sessions: number
+  action: string
   message: string
+
+  user?: AuthUser | null
+  token?: string | null
+  expires_at?: string | null
+
+  email?: string | null
+  cooldown?: number | null
+  expires_in?: number | null
+  /** 仅本地联调时后端返回（AUTH_EXPOSE_RESET_TOKEN=true） */
+  reset_token?: string | null
+
+  checks?: PasswordRule[] | null
+  strength?: number | null
+  revoked_sessions?: number | null
+}
+
+export interface AuthUser {
+  id: string
+  username: string
+  email: string
+  display_name: string
+  status: string
+  is_superuser: boolean
+  roles: string[]
+  permissions: string[]
+  last_login_at: string | null
 }
 
 /* ── 内核管理（引擎维度） ─────────────────────────────── */
-export interface KernelCheck {
-  label: string
-  status: string
-  tone: string
-}
-
-export interface KernelRelease {
+export interface KernelVersion {
   version: string
-  base: string
-  arch: string
-  size: string
+  base: string | null
+  arch: string | null
+  channel: string | null
+  size: string | null
+  released_at: string | null
+  packaged_at: string | null
+  source: string | null
+  /** 版本目录的绝对路径，排障时直接复制 */
+  path: string
+  /** 目录里有 meta.json 标记，才算下载完成 */
+  ready: boolean
+  current: boolean
   instances: number
-  status: string
-  status_tone: string
-  installed: boolean
-  released_at: string
+  warning: string | null
 }
 
-export interface KernelEngine {
+export interface KernelCard {
   id: string
+  slug: string
   name: string
   engine: string
-  base: string
-  level: string
+  channel: string
+  arch: string
   tone: string
   tagline: string
-  usage: string
-  origin: string
-  version: string
-  latest: string
-  update: boolean
-  channel: string
-  size: string
-  arch: string
-  instances: number
-  share: number
-  status: string
-  status_tone: string
-  primary: boolean
-  pass_rate: number
-  checks: KernelCheck[]
-  releases: KernelRelease[]
-  note: string
+  detection_level: string | null
+  repo_url: string | null
+  mirror_url: string | null
+  is_primary: boolean
+  current_version: string | null
+  latest_version: string | null
+  update_available: boolean
+  downloaded: boolean
+  version_count: number
+  instance_count: number
+  stale_count: number
+  disk_path: string
+  scanned_at: string
+  versions: KernelVersion[]
+  note: string | null
 }
 
-export interface KernelSummaryTile {
+export interface KernelStat {
   key: string
   label: string
   value: string
   hint: string
-  icon: string
   tone: string
+  icon: string
 }
 
-export interface KernelTab {
-  key: string
-  label: string
-  count: number
+export interface KernelPayload {
+  stats: KernelStat[]
+  cards: KernelCard[]
+  root: string
+  scanned_at: string
+  total_instances: number
+  total_versions: number
 }
 
-export interface FallbackStep {
+export interface KernelInstance {
   id: string
   name: string
-  engine: string
-  role: string
-  detail: string
-  tone: string
+  version: string | null
+  group: string
+  status: string
 }
 
-export interface ChangelogBlock {
+export interface KernelMigrationResult {
+  ok: boolean
   version: string
-  items: string[]
-  published_at: string
-}
-
-export interface GrayRelease {
-  eyebrow: string
-  title: string
-  done: number
-  total: number
-  percent: number
-  stages: { label: string; active: boolean }[]
-}
-
-export interface KernelEnginePayload {
-  tiles: KernelSummaryTile[]
-  tabs: KernelTab[]
-  engines: KernelEngine[]
-  fallback: FallbackStep[]
-  fallback_triggers: string[]
-  release_note: ChangelogBlock
-  gray: GrayRelease
-  total_instances: number
-  check_labels: string[]
+  migrated: number
+  message: string
 }
 
 export interface PrimaryResponse {
@@ -333,36 +413,94 @@ export interface PrimaryResponse {
   message: string
 }
 
-export interface KernelOption {
-  id: string
+/* ── 引擎档案（browser_engine/<slug>/engine.json，人工维护） ── */
+export type AcquireKind = 'pip' | 'archive' | 'manual'
+
+export interface EngineLink {
+  label: string
+  url: string
+  kind: 'release' | 'docs' | 'bucket' | 'mirror'
+}
+
+export interface EnginePackage {
+  kind: AcquireKind
+  os: string
+  arch: string
+  size: string | null
+  url: string | null
+  /** 上游没公示就留空，页面上标「未校验」，不要伪造 */
+  sha256: string | null
+  installer: string | null
+  pin: string | null
+  note: string | null
+}
+
+export interface EngineVersionSpec {
+  version: string
+  base: string | null
+  channel: string | null
+  released_at: string | null
+  notes: string | null
+  packages: EnginePackage[]
+}
+
+export interface AcquireSpec {
+  kind: AcquireKind
+  installer: string | null
+  pin: string | null
+  fetch: string[]
+  cache_dirs: string[]
+  executable: string | null
+  note: string | null
+}
+
+export interface EngineProfile {
+  schema: number
   name: string
-  channel: string
-  size: string
-  note: string
-  recommended: boolean
-  disabled: boolean
+  engine: string
+  tone: string | null
+  tagline: string | null
+  best_for: string | null
+  detection_level: string | null
+  pros: string[]
+  cons: string[]
+  install_notes: string[]
+  links: EngineLink[]
+  acquire: AcquireSpec | null
+  versions: EngineVersionSpec[]
 }
 
-export interface UpgradeOptions {
-  kernels: KernelOption[]
-  groups: { id: string; name: string; count: number }[]
-  scope_tabs: string[]
-  batches: string[]
-  intervals: string[]
-  toggles: { key: string; label: string; description: string; default: boolean }[]
-  notice: string
-  eta: string
+export interface EngineVersionView extends EngineVersionSpec {
+  installed: boolean
+  installed_size: string | null
+  is_current: boolean
+  /** 磁盘上有、档案没登记（手工放进去的旧版本） */
+  on_disk_only: boolean
 }
 
-export interface UpgradeResponse {
-  ok: boolean
-  task_id: string
-  kernel: string
-  targets: number
-  batch: string
-  interval: string
-  eta: string
+export interface KernelDetailPayload {
+  slug: string
+  card: KernelCard
+  profile: EngineProfile | null
+  profile_ok: boolean
+  profile_error: string | null
+  versions: EngineVersionView[]
+  docs: string | null
+  docs_path: string
+  install_hint: string | null
+}
+
+export interface InstallJob {
+  id: string
+  slug: string
+  version: string
+  kind: AcquireKind
+  status: 'running' | 'success' | 'failed'
+  progress: number
   message: string
+  error: string | null
+  started_at: string
+  finished_at: string | null
 }
 
 /* ── 账号菜单 ─────────────────────────────────────────── */
@@ -375,14 +513,123 @@ export interface MenuRow {
   danger: boolean
 }
 
-export interface AccountMenu {
+export interface UserMenuPayload {
   name: string
   initial: string
   email: string
   role: string
   workspace: string
+  workspace_code: string
   workspace_note: string
   groups: MenuRow[][]
   last_login: string
   version: string
+}
+
+/* ── 个人中心 ─────────────────────────────────────────── */
+export interface WorkspaceBrief {
+  id: string
+  code: string
+  name: string
+  note: string | null
+}
+
+export interface ProfilePayload {
+  id: string
+  username: string
+  display_name: string
+  email: string
+  initial: string
+  role: string
+  role_code: string
+  status: string
+  is_superuser: boolean
+  workspace: WorkspaceBrief | null
+  created_at: string
+  last_login_at: string | null
+  password_updated_at: string | null
+  active_sessions: number
+  mfa_enabled: boolean
+}
+
+export interface ProfileUpdateResponse {
+  ok: boolean
+  message: string
+  profile: ProfilePayload
+}
+
+export interface SessionItem {
+  id: string
+  current: boolean
+  ip_address: string | null
+  browser: string
+  os: string
+  device: string
+  issued_at: string
+  last_seen_at: string | null
+  expires_at: string
+  revoked: boolean
+  revoked_reason: string | null
+}
+
+export interface SessionList {
+  items: SessionItem[]
+  total: number
+  active_total: number
+}
+
+export interface SessionRevokeResponse {
+  ok: boolean
+  message: string
+  revoked: number
+  signed_out: boolean
+}
+
+export interface SecurityEvent {
+  id: string
+  action: string
+  action_label: string
+  result: string
+  detail: string | null
+  ip_address: string | null
+  occurred_at: string
+}
+
+export interface SecurityPayload {
+  password_updated_at: string | null
+  failed_login_count: number
+  locked_until: string | null
+  lock_remaining_minutes: number
+  active_sessions: number
+  mfa_enabled: boolean
+  mfa_note: string
+  last_login_at: string | null
+  recent_events: SecurityEvent[]
+}
+
+/* ── 账号操作日志 ─────────────────────────────────────── */
+export interface AuditLogItem {
+  id: string
+  occurred_at: string
+  operator: string
+  source: string
+  action: string
+  resource_type: string
+  resource_id: string | null
+  resource_name: string | null
+  result: string
+  detail: string | null
+  changes: Record<string, { before: unknown; after: unknown }> | null
+  error_message: string | null
+  duration_ms: number | null
+  request_id: string | null
+  ip_address: string | null
+  user_agent: string | null
+}
+
+export interface AuditLogList {
+  items: AuditLogItem[]
+  total: number
+  limit: number
+  offset: number
 }

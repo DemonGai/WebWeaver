@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "name": "fingerprint-chromium",
+  "engine": "Chromium",
+  "tone": "violet",
+  "tagline": "指纹种子可复现，问题复现专用",
+  "best_for": "需要固定指纹做回归测试、复现某个站点拦截问题的场景",
+  "detection_level": "编译期指纹补丁（基于 ungoogled-chromium）",
+  "pros": [
+    "指纹可以用种子指定，同一配置每次结果一致，问题能复现",
+    "基于 ungoogled-chromium，无遥测、无 Google 服务依赖",
+    "有官方便携包，能离线分发到内网机器"
+  ],
+  "cons": [
+    "反检测强度不如 C++ 商用内核，强风控站点还得配住宅代理",
+    "更新节奏跟着作者个人走，版本跨度大（当前 150.x）",
+    "上游没有公示 sha256，只能校验下载完整性，无法校验来源一致性"
+  ],
+  "install_notes": [
+    "Windows 取 `*_windows_x64.zip` 便携包，解压后可直接跑，不写注册表",
+    "解压后主程序是 chrome.exe，位于包的顶层目录",
+    "Linux 用 x86_64 tar.xz 或 AppImage，档案里暂时只登记了 Windows / Linux"
+  ],
+  "links": [
+    { "label": "GitHub Releases", "url": "https://github.com/adryfish/fingerprint-chromium/releases", "kind": "release" },
+    { "label": "上游项目", "url": "https://github.com/adryfish/fingerprint-chromium", "kind": "docs" }
+  ],
+  "acquire": {
+    "kind": "archive",
+    "executable": "chrome.exe",
+    "note": "官方便携 zip，解压即用"
+  },
+  "versions": [
+    {
+      "version": "150.0.7871.186",
+      "base": "Chromium 150.0.7871.186",
+      "channel": "stable",
+      "released_at": "2026-10-02",
+      "notes": "Update to Chromium 150.0.7871.186，该版本覆盖全平台",
+      "packages": [
+        {
+          "kind": "archive",
+          "os": "windows",
+          "arch": "x64",
+          "size": "184.8 MB",
+          "url": "https://github.com/adryfish/fingerprint-chromium/releases/download/150.0.7871.186/ungoogled-chromium_150.0.7871.186-1.1_windows_x64.zip",
+          "sha256": null,
+          "note": "上游未公示 sha256"
+        },
+        {
+          "kind": "archive",
+          "os": "linux",
+          "arch": "x64",
+          "size": "139.1 MB",
+          "url": "https://github.com/adryfish/fingerprint-chromium/releases/download/150.0.7871.186/ungoogled-chromium-150.0.7871.186-1-x86_64_linux.tar.xz",
+          "sha256": null,
+          "note": "tar.xz，安装器目前只解压 zip"
+        }
+      ]
+    }
+  ]
+}

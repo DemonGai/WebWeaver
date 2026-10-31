@@ -1,94 +1,114 @@
-from fastapi import APIRouter
+"""认证接口：一个写入口 + 三个查询口。
 
+写操作全部收敛到 ``POST /api/auth``，用 ``action`` 区分
+``login`` / ``register`` / ``logout`` / ``forgot_password`` / ``resend_reset`` /
+``reset_password``。这么做的好处是认证相关的策略（限流、验证码、审计、
+令牌签发）只有一处；代价是响应变成一个「超集」信封，见 ``schemas/auth.py``。
+
+保留成独立 GET 的是纯查询：工作区列表、图形验证码、当前登录成员——它们没有副作用，
+放进 POST 反而丢了缓存与幂等语义。
+"""
+
+from fastapi import APIRouter, Request
+
+from app.api.deps import CurrentUser, OptionalUser, SessionDep, bearer_token
 from app.schemas.auth import (
+    AuthAction,
+    AuthResponse,
     Captcha,
     ForgotPasswordRequest,
-    ForgotPasswordResponse,
-    ResendRequest,
-    ResendResponse,
+    LoginRequest,
+    LogoutRequest,
+    MeResponse,
+    RegisterRequest,
+    ResendResetRequest,
     ResetPasswordRequest,
-    ResetPasswordResponse,
     WorkspaceList,
 )
 from app.services import auth_service
+from app.services import user as user_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+@router.post("", response_model=AuthResponse, summary="认证统一入口（按 action 分发）")
+async def auth_action(
+    payload: AuthAction,
+    request: Request,
+    session: SessionDep,
+) -> AuthResponse:
+    """一个入口做六件事。
+
+    ``action`` 决定走哪条分支；请求体按动作校验（判别联合），
+    缺字段或字段类型不对由 Pydantic 直接 422，不需要在这里写 if 判空。
+    """
+    match payload:
+        case LoginRequest():
+            return await auth_service.login(
+                session,
+                request=request,
+                account=payload.account,
+                password=payload.password,
+                remember=payload.remember,
+            )
+
+        case RegisterRequest():
+            return await auth_service.register(
+                session,
+                request=request,
+                username=payload.username,
+                email=payload.email,
+                password=payload.password,
+                confirm=payload.confirm,
+                display_name=payload.display_name,
+                workspace=payload.workspace,
+            )
+
+        case LogoutRequest():
+            return await auth_service.logout(session, request=request, token=bearer_token(request))
+
+        case ForgotPasswordRequest():
+            return await auth_service.forgot_password(
+                session,
+                request=request,
+                email=payload.email,
+                captcha=payload.captcha,
+                workspace=payload.workspace,
+            )
+
+        case ResendResetRequest():
+            return await auth_service.resend_reset(session, request=request, email=payload.email)
+
+        case ResetPasswordRequest():
+            return await auth_service.reset_password(
+                session,
+                request=request,
+                token=payload.token,
+                password=payload.password,
+                confirm=payload.confirm,
+                email=payload.email,
+            )
+
+    # 判别联合已保证进不来，留一句兜底便于将来新增 action 时立刻暴露问题
+    return AuthResponse(ok=False, action="unknown", message="不支持的 action")
+
+
+@router.get("/me", response_model=MeResponse, summary="当前登录成员与权限")
+async def me(user: CurrentUser, session: SessionDep) -> MeResponse:
+    profile = await auth_service.profile_of(session, user)
+    return MeResponse(
+        ok=True,
+        message="已登录",
+        user=profile,
+    )
+
+
 @router.get("/workspaces", response_model=WorkspaceList, summary="可选工作区列表")
-async def get_workspaces() -> WorkspaceList:
-    return WorkspaceList(items=auth_service.WORKSPACES, default_id=auth_service.DEFAULT_WORKSPACE)
+async def get_workspaces(user: OptionalUser, session: SessionDep) -> WorkspaceList:
+    """工作区来自数据库；登录时 ``default_id`` 是本人的默认工作区。"""
+    return await user_service.list_workspaces(session, user)
 
 
 @router.get("/captcha", response_model=Captcha, summary="获取图形验证码")
 async def get_captcha() -> Captcha:
     return auth_service.issue_captcha()
-
-
-@router.post("/forgot-password", response_model=ForgotPasswordResponse, summary="发送密码重置邮件")
-async def forgot_password(payload: ForgotPasswordRequest) -> ForgotPasswordResponse:
-    if not auth_service.is_email(payload.email):
-        return ForgotPasswordResponse(
-            ok=False,
-            email=payload.email,
-            expires_in=0,
-            cooldown=0,
-            message="邮箱格式不正确，请检查后重试",
-        )
-
-    if not auth_service.verify_captcha(payload.captcha):
-        return ForgotPasswordResponse(
-            ok=False,
-            email=payload.email,
-            expires_in=0,
-            cooldown=0,
-            message="图形验证码不正确或已过期",
-        )
-
-    ok, message, cooldown = auth_service.send_reset_mail(payload.email)
-    return ForgotPasswordResponse(
-        ok=ok,
-        email=payload.email.strip(),
-        expires_in=cooldown,
-        cooldown=cooldown,
-        message=message,
-    )
-
-
-@router.post("/resend-reset", response_model=ResendResponse, summary="重新发送重置邮件")
-async def resend_reset(payload: ResendRequest) -> ResendResponse:
-    ok, message, cooldown = auth_service.resend(payload.email)
-    return ResendResponse(ok=ok, cooldown=cooldown, message=message)
-
-
-@router.post("/reset-password", response_model=ResetPasswordResponse, summary="校验并提交新密码")
-async def reset_password(payload: ResetPasswordRequest) -> ResetPasswordResponse:
-    checks = auth_service.password_checks(payload.password, payload.email, payload.confirm)
-    strength = auth_service.strength_of(checks)
-
-    if payload.password != payload.confirm:
-        return ResetPasswordResponse(
-            ok=False,
-            checks=checks,
-            strength=strength,
-            revoked_sessions=0,
-            message="两次输入的密码不一致",
-        )
-
-    failed = [c.label for c in checks if not c.passed]
-    if failed:
-        return ResetPasswordResponse(
-            ok=False,
-            checks=checks,
-            strength=strength,
-            revoked_sessions=0,
-            message=f"密码未满足：{'、'.join(failed)}",
-        )
-
-    return ResetPasswordResponse(
-        ok=True,
-        checks=checks,
-        strength=4,
-        revoked_sessions=auth_service.revoked_sessions(),
-        message="密码已重置，全部设备需要重新登录",
-    )

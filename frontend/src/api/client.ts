@@ -4,6 +4,16 @@
  */
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api'
 
+/** 会话令牌存在 localStorage：刷新页面不掉登录态。
+ *  代价是 XSS 能读到它；要彻底规避需要改成 httpOnly Cookie + CSRF 令牌。 */
+const TOKEN_KEY = 'webweaver_token'
+
+export const authToken = {
+  get: () => localStorage.getItem(TOKEN_KEY),
+  set: (token: string) => localStorage.setItem(TOKEN_KEY, token),
+  clear: () => localStorage.removeItem(TOKEN_KEY),
+}
+
 export interface ApiErrorPayload {
   detail?: string | { msg?: string }[]
   message?: string
@@ -30,7 +40,7 @@ function extractMessage(payload: ApiErrorPayload | null, fallback: string): stri
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem('webweaver_token')
+  const token = authToken.get()
 
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
@@ -43,6 +53,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const text = await res.text()
   const data = text ? (JSON.parse(text) as unknown) : null
+
+  // 令牌过期或被吊销：清掉本地那份，避免每个请求都带着一个死令牌
+  if (res.status === 401 && token) authToken.clear()
 
   if (!res.ok) {
     throw new ApiError(
@@ -61,6 +74,8 @@ export const api = {
     request<T>(path, { ...init, method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   put: <T>(path: string, body?: unknown, init?: RequestInit) =>
     request<T>(path, { ...init, method: 'PUT', body: body ? JSON.stringify(body) : undefined }),
+  patch: <T>(path: string, body?: unknown, init?: RequestInit) =>
+    request<T>(path, { ...init, method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(path: string, init?: RequestInit) => request<T>(path, { ...init, method: 'DELETE' }),
 }
 

@@ -3,16 +3,18 @@ import type { ReactNode } from 'react'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
 import { PageHeader, PageShell } from '@/components/Layout'
-import { Card, PillTabs, SearchInput, SelectBox } from '@/components/ui'
+import { Card, Checkbox, PillTabs, SearchInput, SelectBox } from '@/components/ui'
 import {
   IconAndroid,
   IconApple,
   IconBolt,
   IconCheck,
   IconChevronLeft,
+  IconCpu,
   IconDownload,
   IconGrid,
   IconList,
+  IconMonitor,
   IconMore,
   IconPlus,
   IconWindows,
@@ -23,8 +25,21 @@ import type { FingerprintTemplate, PlatformFamily } from '@/types/domain'
 const familyStyle: Record<PlatformFamily, { tile: string; glyph: ReactNode }> = {
   windows: { tile: 'bg-blue-50 text-blue-500', glyph: <IconWindows size={13} /> },
   macos: { tile: 'bg-zinc-100 text-zinc-700', glyph: <IconApple size={13} /> },
-  mobile: { tile: 'bg-emerald-50 text-emerald-600', glyph: <IconAndroid size={13} /> },
+  linux: { tile: 'bg-orange-50 text-orange-600', glyph: <IconCpu size={13} /> },
+  android: { tile: 'bg-emerald-50 text-emerald-600', glyph: <IconAndroid size={13} /> },
+  ios: { tile: 'bg-sky-50 text-sky-600', glyph: <IconApple size={13} /> },
 }
+
+/** 后端将来新增平台族时也不能整页崩：取不到样式就退回中性图标。 */
+const fallbackFamily = { tile: 'bg-zinc-100 text-zinc-600', glyph: <IconMonitor size={13} /> }
+
+const styleOf = (family: PlatformFamily) => familyStyle[family] ?? fallbackFamily
+
+/** 筛选里的「移动」是分组，落到具体平台族是 android + ios。 */
+const MOBILE_FAMILIES: PlatformFamily[] = ['android', 'ios']
+
+const matchesTab = (family: PlatformFamily, tab: string) =>
+  tab === 'all' || family === tab || (tab === 'mobile' && MOBILE_FAMILIES.includes(family))
 
 export default function FingerprintsPage() {
   const { data, status, error, reload } = useApi(endpoints.fingerprints, [])
@@ -36,7 +51,7 @@ export default function FingerprintsPage() {
     if (!data) return []
     const keyword = query.trim().toLowerCase()
     return data.templates
-      .filter((t) => tab === 'all' || t.platform_family === tab)
+      .filter((t) => matchesTab(t.platform_family, tab))
       .filter((t) =>
         keyword === ''
           ? true
@@ -62,7 +77,6 @@ export default function FingerprintsPage() {
   if (!data) return null
 
   const allChecked = rows.length > 0 && rows.every((r) => selected.includes(r.id))
-  const toggleAll = () => setSelected(allChecked ? [] : rows.map((r) => r.id))
 
   return (
     <PageShell>
@@ -150,15 +164,14 @@ export default function FingerprintsPage() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] px-4 py-3">
-          <label className="flex cursor-pointer items-center gap-2 text-[11.5px] text-[var(--ink-500)]">
-            <input
-              type="checkbox"
+          <div className="flex items-center gap-2 text-[11.5px] text-[var(--ink-500)]">
+            <Checkbox
               checked={allChecked}
-              onChange={toggleAll}
-              className="size-3.5 accent-[#18181b]"
+              onChange={(next) => setSelected(next ? rows.map((r) => r.id) : [])}
+              label="全选当前页模板"
             />
             显示 {rows.length} / {data.total} 条模板，已选择 {selected.length} 条
-          </label>
+          </div>
 
           <div className="flex items-center gap-1">
             <button
@@ -190,7 +203,7 @@ export default function FingerprintsPage() {
 }
 
 function Row({ template: t, checked }: { template: FingerprintTemplate; checked: boolean }) {
-  const family = familyStyle[t.platform_family]
+  const family = styleOf(t.platform_family)
   const pairs = chunk(t.disguises)
 
   return (

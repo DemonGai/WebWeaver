@@ -1,0 +1,28 @@
+name: webweaver
+
+services:
+  postgres:
+    image: postgres:18
+    container_name: webweaver-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: webweaver
+      POSTGRES_PASSWORD: webweaver
+      POSTGRES_DB: webweaver
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      # postgres:18 起数据目录位于 /var/lib/postgresql/<major>/docker，挂父目录以兼容
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webweaver -d webweaver"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  pgdata:
+    name: webweaver-pgdata

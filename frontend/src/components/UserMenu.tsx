@@ -1,26 +1,24 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { authToken } from '@/api/client'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
-import type { AccountMenu, MenuRow } from '@/types/domain'
+import type { MenuRow, UserMenuPayload } from '@/types/domain'
 import {
   IconBell,
   IconBuilding,
-  IconChevronDown,
   IconChevronRight,
   IconClock,
   IconDevices,
-  IconGear,
   IconList,
   IconLock,
   IconLogout,
   IconShield,
-  IconSwap,
   IconUser,
 } from './icons'
 
 const rowIcon: Record<string, ReactNode> = {
   user: <IconUser size={13} />,
-  swap: <IconSwap size={13} />,
   lock: <IconLock size={13} />,
   shield: <IconShield size={13} />,
   devices: <IconDevices size={13} />,
@@ -35,13 +33,27 @@ const badgeTone: Record<string, string> = {
 }
 
 /**
+ * 菜单项 → 页面。
+ * 没有「切换账号」：成员只有一个默认工作区，切换没有意义；
+ * 右上角也没有设置按钮，改资料统一走「个人信息」。
+ */
+const ROUTES: Record<string, string> = {
+  profile: '/settings/profile',
+  'reset-password': '/forgot-password',
+  mfa: '/settings/security',
+  devices: '/settings/sessions',
+  audit: '/settings/audit-logs',
+}
+
+/**
  * 头像菜单浮层
  * - 悬停 120ms 后展开，头像出现 2px 深色描边高亮
  * - 右边缘与头像右边缘对齐，向下偏移 8px，宽度 320px
  * - 移出浮层 / 点击外部 / Esc 均可关闭
  */
 export function UserMenu() {
-  const { data } = useApi<AccountMenu>(() => endpoints.accountMenu())
+  const navigate = useNavigate()
+  const { data } = useApi<UserMenuPayload>(() => endpoints.userMenu())
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const openTimer = useRef<number | null>(null)
@@ -80,7 +92,26 @@ export function UserMenu() {
     closeTimer.current = window.setTimeout(() => setOpen(false), 90)
   }
 
-  const initial = data?.initial ?? '林'
+  const initial = data?.initial ?? '?'
+
+  const onSelectRow = async (row: MenuRow) => {
+    setOpen(false)
+
+    if (row.key !== 'logout') {
+      const target = ROUTES[row.key]
+      if (target) navigate(target)
+      return
+    }
+
+    // 注销失败（令牌早已失效）也要把本地状态清干净，否则会一直带着死令牌
+    try {
+      await endpoints.logout()
+    } catch {
+      // 忽略：401 说明会话本来就没了
+    }
+    authToken.clear()
+    navigate('/login')
+  }
 
   return (
     <div ref={wrapRef} className="relative" onMouseEnter={onEnter} onMouseLeave={onLeave}>
@@ -109,36 +140,29 @@ export function UserMenu() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <span className="text-[13px] font-semibold text-[var(--ink-900)]">{data.name}</span>
+                <span className="truncate text-[13px] font-semibold text-[var(--ink-900)]">
+                  {data.name}
+                </span>
                 <span className="chip bg-blue-50 px-1.5 text-[10px] text-blue-600">{data.role}</span>
               </div>
               <div className="mt-0.5 truncate text-[10.5px] text-[var(--ink-400)]">{data.email}</div>
             </div>
-            <button type="button" className="shrink-0 text-[var(--ink-400)] hover:text-[var(--ink-500)]">
-              <IconGear size={14} />
-            </button>
           </div>
 
-          {/* 工作区 */}
-          <div className="mx-3 mb-1 flex items-center justify-between rounded-xl bg-[#fafafa] px-3 py-2.5">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="text-[var(--ink-400)]">
-                <IconBuilding size={14} />
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-[12px] font-medium text-[var(--ink-900)]">
-                  {data.workspace}
-                </div>
-                <div className="text-[10px] text-[var(--ink-400)]">{data.workspace_note}</div>
+          {/* 默认工作区：每人一个，没有可切换的目标，所以只做展示 */}
+          <div className="mx-3 mb-1 flex items-center gap-2 rounded-xl bg-[#fafafa] px-3 py-2.5">
+            <span className="text-[var(--ink-400)]">
+              <IconBuilding size={14} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[12px] font-medium text-[var(--ink-900)]">
+                {data.workspace}
               </div>
+              <div className="truncate text-[10px] text-[var(--ink-400)]">{data.workspace_note}</div>
             </div>
-            <button
-              type="button"
-              className="flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-blue-600 hover:underline"
-            >
-              切换
-              <IconChevronDown size={11} />
-            </button>
+            <span className="chip shrink-0 bg-white px-1.5 text-[10px] text-[var(--ink-500)]">
+              默认
+            </span>
           </div>
 
           {/* 菜单分组 */}
@@ -147,7 +171,7 @@ export function UserMenu() {
               <div className="mx-3 my-1 h-px bg-[var(--line)]" />
               <div className="px-1.5 py-1">
                 {group.map((row) => (
-                  <MenuRowItem key={row.key} row={row} />
+                  <MenuRowItem key={row.key} row={row} onSelect={() => onSelectRow(row)} />
                 ))}
               </div>
             </div>
@@ -167,19 +191,24 @@ export function UserMenu() {
   )
 }
 
-function MenuRowItem({ row }: { row: MenuRow }) {
+function MenuRowItem({ row, onSelect }: { row: MenuRow; onSelect?: () => void }) {
   return (
     <button
       type="button"
       role="menuitem"
+      onClick={onSelect}
       className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[8px] text-left transition-colors hover:bg-[#fafafa] ${
         row.danger ? 'text-rose-500' : 'text-[var(--ink-700)]'
       }`}
     >
-      <span className={row.danger ? 'text-rose-500' : 'text-[var(--ink-400)]'}>{rowIcon[row.icon]}</span>
+      <span className={row.danger ? 'text-rose-500' : 'text-[var(--ink-400)]'}>
+        {rowIcon[row.icon]}
+      </span>
       <span className="flex-1 text-[12px]">{row.label}</span>
       {row.badge && (
-        <span className={`chip px-1.5 text-[10px] ${badgeTone[row.badge_tone ?? 'zinc'] ?? badgeTone.zinc}`}>
+        <span
+          className={`chip px-1.5 text-[10px] ${badgeTone[row.badge_tone ?? 'zinc'] ?? badgeTone.zinc}`}
+        >
           {row.badge}
         </span>
       )}

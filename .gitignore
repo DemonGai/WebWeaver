@@ -22,3 +22,25 @@ backend/.ruff_cache/
 Thumbs.db
 .idea/
 .vscode/
+
+# 工作区数据（截图、记忆、临时产物）
+.workbuddy/
+
+# 前端锁文件只保留 bun.lock（README 声明包管理用 bun），npm 装的锁文件不入库
+frontend/package-lock.json
+
+# 后端日志
+backend/logs/
+# aria2c（5.6MB 单文件下载器，本机已有就该用它；不放仓库，首次部署用 scripts/get-aria2.sh 拉）
+backend/bin/aria2c.exe
+backend/bin/aria2c
+# 内核文件目录（真实二进制太大，本地按需生成）
+# 目录本身放行、只忽略文件，否则 git 不会进目录，下面的白名单也失效；
+# engine.json 是人工维护的引擎档案、README.md 是页面正文，两者要能提交。
+# meta.json 是"本机已下载"的完工标记，属于部署现场状态，不入库 —— 否则换台机器 clone
+# 下来会被误判成已安装（目录里只有几百字节的 meta.json，二进制并不存在）。
+backend/browser_engine/**
+!backend/browser_engine/*/
+!backend/browser_engine/**/
+!backend/browser_engine/**/engine.json
+!backend/browser_engine/**/README.md

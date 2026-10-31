@@ -1,0 +1,142 @@
+"""浏览器池的写接口模型：新建、编辑、绑定、启停与批量操作。
+
+与 ``schemas/domain.py`` 里的只读展示模型分开：那边是「列表页要渲染成什么样」，
+这里是「前端能提交什么」。两者刻意不共用，展示模型加个字段不该顺带让写接口
+多接受一个参数。
+"""
+
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+from app.schemas.domain import InstanceStatus
+
+# 生命周期动作：启动 / 停止 / 重启。重启用一条动作表示，
+# 而不是让前端自己拼 stop+start——那样两次请求之间状态会短暂不一致。
+BrowserActionName = Literal["start", "stop", "restart"]
+
+
+class BrowserOption(BaseModel):
+    """下拉选项：id + 展示文案 + 补充说明，够前端直接渲染。"""
+
+    id: str
+    label: str
+    hint: str = ""
+    # 已被别的实例占用时为 True：仍展示但不让选，用户能看懂「为什么没有它」
+    disabled: bool = False
+
+
+class BrowserOptions(BaseModel):
+    """新建 / 绑定弹窗需要的全部候选资源。"""
+
+    groups: list[BrowserOption]
+    kernels: list[BrowserOption]
+    # 内核 → 磁盘上已下载的版本（新到旧）。新建实例时可以让用户挑版本，
+    # 老实例留在旧版本上，新实例直接用新版本。
+    kernel_versions: dict[str, list[str]] = Field(default_factory=dict)
+    accounts: list[BrowserOption]
+    ips: list[BrowserOption]
+    fingerprints: list[BrowserOption]
+
+
+class BrowserCreate(BaseModel):
+    """新建实例。
+
+    资源字段全部可空：允许先建空壳再逐个绑定，这在实际运维里很常见
+    （先把机器占下来，账号 IP 后面再分配）。``ip_id`` / ``fingerprint_id``
+    传空表示直连与默认指纹，与表上的模式约束一致。
+    """
+
+    name: str = Field(
+        min_length=2,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+        description="实例名，作为业务唯一标识",
+    )
+    group_id: UUID | None = None
+    kernel_id: UUID | None = None
+    # 留空 = 跟随该内核当前版本
+    kernel_version: str | None = Field(default=None, max_length=64)
+    account_id: UUID | None = None
+    ip_id: UUID | None = None
+    fingerprint_id: UUID | None = None
+    note: str | None = Field(default=None, max_length=255)
+
+
+class BrowserUpdate(BaseModel):
+    """编辑实例。只处理「请求里出现过的字段」，没传的保持原值。
+
+    这一点对 ``ip_id`` / ``fingerprint_id`` 尤其重要：显式传 ``null`` 是
+    「切回直连 / 默认指纹」，不传才是「别动」。所以服务层用
+    ``model_fields_set`` 判断，不能用 ``is not None``。
+    """
+
+    name: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    group_id: UUID | None = None
+    kernel_id: UUID | None = None
+    kernel_version: str | None = Field(default=None, max_length=64)
+    account_id: UUID | None = None
+    ip_id: UUID | None = None
+    fingerprint_id: UUID | None = None
+    note: str | None = Field(default=None, max_length=255)
+
+
+class BrowserDetail(BaseModel):
+    """单个实例的完整信息，编辑弹窗回填用。"""
+
+    id: str
+    name: str
+    status: InstanceStatus
+    group_id: str | None = None
+    group: str
+    kernel_id: str | None = None
+    kernel: str
+    kernel_version: str | None = None
+    account_id: str | None = None
+    account: str
+    ip_id: str | None = None
+    ip: str
+    ip_mode: str
+    region: str
+    fingerprint_id: str | None = None
+    fingerprint: str
+    fingerprint_mode: str
+    cdp_url: str | None = None
+    vnc_url: str | None = None
+    vnc_port: int | None = None
+    fps: int | None = None
+    latency_ms: int | None = None
+    started_at: str | None = None
+    last_active_at: str | None = None
+    created_at: str
+    updated_at: str
+    note: str | None = None
+
+
+class BrowserActionItem(BaseModel):
+    """单个实例的动作结果。批量里失败的那几条也要说清原因。"""
+
+    id: str
+    name: str
+    ok: bool
+    status: str
+    message: str
+
+
+class BrowserBatchResult(BaseModel):
+    ok: bool
+    action: str
+    succeeded: int
+    failed: int
+    items: list[BrowserActionItem]
+
+
+class BrowserMutationResult(BaseModel):
+    ok: bool
+    message: str

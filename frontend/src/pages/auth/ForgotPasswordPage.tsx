@@ -60,9 +60,13 @@ export default function ForgotPasswordPage() {
         refreshCaptcha()
         return
       }
-      navigate(
-        `/reset-email-sent?email=${encodeURIComponent(res.email)}&cooldown=${res.cooldown}`,
-      )
+      const query = new URLSearchParams({
+        email: res.email ?? email,
+        cooldown: String(res.cooldown ?? 0),
+      })
+      // 本地没有邮件服务时后端会把令牌直接返回，带上它才能把重置流程点通
+      if (res.reset_token) query.set('token', res.reset_token)
+      navigate(`/reset-email-sent?${query.toString()}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : '发送失败，请稍后重试')
       refreshCaptcha()

@@ -313,7 +313,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-full">
       <div className="sticky top-0 z-30 border-b border-[var(--line)] bg-white/95 backdrop-blur">
-        <div className="mx-auto flex h-16 w-full max-w-[1440px] items-center gap-2 px-7">
+        <div className="flex h-16 w-full items-center gap-2 px-7">
           <Link
             to="/"
             className="flex size-8 items-center justify-center rounded-lg border border-[var(--line)] text-[var(--ink-500)] hover:bg-[#f7f7f8]"
@@ -324,7 +324,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           <span className="text-[12px] text-[var(--ink-400)]">/ 浏览器池 / noVNC 实时接管</span>
         </div>
       </div>
-      <main className="mx-auto w-full max-w-[1440px] px-7 py-5">{children}</main>
+      <main className="w-full px-7 py-5">{children}</main>
     </div>
   )
 }

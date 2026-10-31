@@ -1,0 +1,14 @@
+# 文本文件统一按 LF 入库，检出时由各平台决定是否转换
+* text=auto
+
+# 给 bash 用的脚本必须保持 LF
+# 仓库在 Windows 上开发（core.autocrlf=true），不显式钉住的话 push 上去就是 CRLF，
+# Linux/macOS 克隆后执行会报 bad interpreter: /usr/bin/env: 'bash\r'
+*.sh text eol=lf
+
+# 二进制，别做换行转换和文本 diff
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary
+*.exe binary

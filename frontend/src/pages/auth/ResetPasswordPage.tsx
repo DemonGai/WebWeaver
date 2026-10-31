@@ -49,6 +49,8 @@ const STRENGTH: Record<number, { label: string; bar: string; text: string }> = {
 export default function ResetPasswordPage() {
   const [params] = useSearchParams()
   const email = params.get('email') ?? 'lin.zhiyuan@webweaver.io'
+  // 令牌是重置的唯一凭据：没有它服务端会直接拒绝，前端先把话说清楚
+  const token = params.get('token') ?? ''
 
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -67,14 +69,20 @@ export default function ResetPasswordPage() {
     e.preventDefault()
     if (submitting) return
     setError(null)
+
+    if (!token) {
+      setError('重置链接缺少令牌，请返回找回密码重新发送邮件')
+      return
+    }
+
     setSubmitting(true)
     try {
-      const res = await endpoints.resetPassword({ password, confirm, email })
+      const res = await endpoints.resetPassword({ token, password, confirm, email })
       if (!res.ok) {
         setError(res.message)
         return
       }
-      setDone({ revoked: res.revoked_sessions })
+      setDone({ revoked: res.revoked_sessions ?? 0 })
     } catch (err) {
       setError(err instanceof Error ? err.message : '重置失败，请稍后重试')
     } finally {

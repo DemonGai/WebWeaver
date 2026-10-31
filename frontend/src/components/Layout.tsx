@@ -31,11 +31,15 @@ const SEARCH_HINT: Record<string, string> = {
 
 export function Header() {
   const { pathname } = useLocation()
-  const placeholder = SEARCH_HINT[pathname] ?? '搜索实例 / 账号 / IP'
+  // 前缀匹配：/kernels/camoufox 这类子页面也要拿到「搜索内核版本」
+  const placeholder =
+    SEARCH_HINT[pathname] ??
+    Object.entries(SEARCH_HINT).find(([path]) => pathname.startsWith(`${path}/`))?.[1] ??
+    '搜索实例 / 账号 / IP'
 
   return (
     <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-white/95 backdrop-blur">
-      <div className="mx-auto flex h-16 w-full max-w-[1440px] items-center gap-7 px-7">
+      <div className="flex h-16 w-full items-center gap-7 px-7">
         {/* Logo + 产品名 */}
         <div className="shrink-0">
           <BrandLockup />
@@ -108,7 +112,7 @@ export function PageShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full">
       <Header />
-      <main className="mx-auto w-full max-w-[1440px] px-7 py-6">{children}</main>
+      <main className="w-full px-7 py-6">{children}</main>
     </div>
   )
 }

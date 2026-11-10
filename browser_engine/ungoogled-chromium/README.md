@@ -138,6 +138,11 @@ curl http://127.0.0.1:9222/json/version
   镜像里装了 `fonts-noto-cjk`
 - **僵尸进程**：Chromium 会 fork 很多子进程，`init: true` 让 tini 收尸
 - **沙箱**：容器内一般起不来，默认 `--no-sandbox`；要保留就用 `CHROME_NO_SANDBOX=0`
+- **窗口只占半屏**：容器里没有窗口管理器，Xvfb 只是块裸画布，Chromium 于是按自己的
+  启发式挑窗口尺寸 —— 实测在 1920x1080 的屏上开了 **945x1060**，noVNC 里就是
+  「只有左半边」。`MODE=vnc` 时 entrypoint 现在显式传
+  `--window-size=<屏宽>,<屏高> --window-position=0,0`，实测窗口 1919x1079 正好铺满。
+  想自己指定就用 `CHROME_ARGS="--window-size=1280,800"`，检测到就不再覆盖
 
 日志里那串 `Failed to connect to the bus` 是容器没有 systemd/dbus 的常态，不影响使用。
 

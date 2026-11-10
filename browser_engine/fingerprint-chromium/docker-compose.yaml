@@ -1,0 +1,85 @@
+# fingerprint-chromium 内核容器
+#
+# 用法（在本目录下执行）：
+#   docker compose up -d --build                          # 用默认版本
+#   FP_VERSION=148.0.7778.215 docker compose up -d --build
+#   docker compose logs -f                                # 看启动日志（会打印生效的指纹）
+#   docker compose down
+#
+# 想同时跑两个版本，必须用不同的项目名，否则 compose 会认为是同一个服务、
+# 把上一个容器删掉：
+#   FP_VERSION=148.0.7778.215 docker compose -p fpc148 up -d --build
+#   FP_VERSION=150.0.7871.186 docker compose -p fpc150 up -d --build
+#
+# 版本切换的唯一来源就是 FP_VERSION（可以写在同目录的 .env 里），
+# 它同时决定四件事：COPY 哪份 AppImage、镜像 tag、容器名、profile 挂载目录。
+
+name: webweaver-kernels-fingerprint-chromium
+
+services:
+  fingerprint-chromium:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        FP_VERSION: ${FP_VERSION:-148.0.7778.215}
+        WITH_VNC: ${WITH_VNC:-1}
+        # 海外机器把 APT_MIRROR 换成 deb.debian.org，避免绕回国内源
+        BASE_IMAGE: ${BASE_IMAGE:-debian:bookworm-slim}
+        APT_MIRROR: ${APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}
+    image: webweaver/fingerprint-chromium:${FP_VERSION:-148.0.7778.215}
+    container_name: wv-fingerprint-chromium-${FP_VERSION:-148.0.7778.215}
+
+    # Chromium 会 fork 一堆子进程，没有 init 容易留僵尸
+    init: true
+    restart: unless-stopped
+
+    ports:
+      # 端口和另外两个内核错开（ungoogled 9222/6080、cloakbrowser 9232/6082），
+      # 三套可以同时跑。要改直接写 .env。
+      - "${FPC_CDP_HOST_PORT:-9242}:9222"     # CDP，后端 / Playwright 连这个
+      - "${FPC_NOVNC_HOST_PORT:-6084}:6080"   # noVNC 网页（MODE=vnc 才有用）
+
+    environment:
+      # 默认 vnc：这个项目要人工看浏览器界面（验证码、登录、代理连通性）
+      MODE: ${MODE:-vnc}
+      CDP_PORT: "9222"
+      START_URL: ${START_URL:-about:blank}
+      SCREEN: ${SCREEN:-1920x1080x24}
+      CHROME_ARGS: ${CHROME_ARGS:-}
+      CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-1}
+      TZ: ${TZ:-Asia/Shanghai}
+
+      # ── 指纹（全部留空 = 走 /data/fingerprint.json，再没有就沿用上次的种子）
+      # 后端按画像起容器时，直接把这几个值传进来就是最省事的方式：
+      #   FINGERPRINT_SEED=42817 FINGERPRINT_TIMEZONE=Asia/Shanghai ...
+      FINGERPRINT_FILE: ${FINGERPRINT_FILE:-/data/fingerprint.json}
+      FINGERPRINT_SEED: ${FINGERPRINT_SEED:-}
+      FINGERPRINT_PLATFORM: ${FINGERPRINT_PLATFORM:-}
+      FINGERPRINT_PLATFORM_VERSION: ${FINGERPRINT_PLATFORM_VERSION:-}
+      FINGERPRINT_BRAND: ${FINGERPRINT_BRAND:-}
+      FINGERPRINT_BRAND_VERSION: ${FINGERPRINT_BRAND_VERSION:-}
+      FINGERPRINT_HARDWARE_CONCURRENCY: ${FINGERPRINT_HARDWARE_CONCURRENCY:-}
+      FINGERPRINT_TIMEZONE: ${FINGERPRINT_TIMEZONE:-}
+      FINGERPRINT_LOCALE: ${FINGERPRINT_LOCALE:-}
+      FINGERPRINT_LANG: ${FINGERPRINT_LANG:-}
+      FINGERPRINT_ACCEPT_LANG: ${FINGERPRINT_ACCEPT_LANG:-}
+      # 只用来关掉个别伪造项（font / audio / canvas / clientrects / gpu），默认空
+      FINGERPRINT_DISABLE_SPOOFING: ${FINGERPRINT_DISABLE_SPOOFING:-}
+      # 这个内核没有 --fingerprint-webrtc-ip，传了也只会打印一条告警
+      FINGERPRINT_WEBRTC_IP: ${FINGERPRINT_WEBRTC_IP:-}
+
+    volumes:
+      # 每个版本一个 profile 目录：同一份配置不能给两个版本共用，
+      # 否则 Chromium 会因为版本不一致报 profile 需要重建。
+      # 指纹文件放这里，写 ./data/<版本>/fingerprint.json 即可。
+      - ./data/${FP_VERSION:-148.0.7778.215}:/data
+
+    # 默认 64MB 会让渲染进程随机崩溃，这是容器里跑 Chromium 最常见的坑
+    shm_size: "1gb"
+
+    # 有显卡可以放开（配合 CHROME_ARGS="--use-gl=angle"）：
+    # devices:
+    #   - /dev/dri:/dev/dri
+
+    stop_grace_period: 15s

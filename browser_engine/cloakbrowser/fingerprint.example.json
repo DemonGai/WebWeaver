@@ -1,0 +1,8 @@
+{
+  "seed": 42817,
+  "platform": "windows",
+  "timezone": "Asia/Shanghai",
+  "locale": "zh-CN",
+  "lang": "zh-CN",
+  "webrtc_ip": "203.0.113.10"
+}

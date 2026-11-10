@@ -1,0 +1,20 @@
+# 构建上下文里不用的东西。
+#
+# 注意：fonts/ 和 <版本号>/ 必须留在上下文里，Dockerfile 要 COPY 它们，
+# 所以这里绝不能写 fonts/ 或版本目录的通配。
+
+Dockerfile
+docker-compose.yaml
+docker-compose.yml
+.env
+.env.example
+README.md
+.dockerignore
+fingerprint.example.json
+
+# 运行时生成的 profile 目录
+data/
+
+# 下载的原始压缩包（解压后就不再需要进镜像）
+*.tar.gz
+*.zip

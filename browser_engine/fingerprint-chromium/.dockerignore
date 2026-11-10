@@ -1,0 +1,16 @@
+# 构建上下文里不用的东西。
+#
+# 注意：*.AppImage 和 fonts/ 必须留在上下文里，Dockerfile 要 COPY 它们，
+# 所以这里绝不能写 *.AppImage 或 fonts/ 之类。
+
+Dockerfile
+docker-compose.yaml
+docker-compose.yml
+.env
+.env.example
+README.md
+.dockerignore
+fingerprint.example.json
+
+# 运行时生成的 profile 目录
+data/

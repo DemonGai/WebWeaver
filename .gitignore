@@ -57,6 +57,11 @@ browser_engine/**
 !browser_engine/**/.dockerignore
 !browser_engine/**/.env.example
 !browser_engine/**/README.md
+!browser_engine/**/*.sh
+!browser_engine/**/fingerprint.example.json
+# fonts/ 里是自己机器的微软字体，不重新分发；只放行占位文件让目录能存在
+# （Dockerfile 要 COPY fonts/，缺目录会构建失败）
+!browser_engine/**/fonts/.gitkeep
 
 # 容器运行时生成的 profile 目录
 browser_engine/**/data/

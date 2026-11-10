@@ -73,6 +73,19 @@ if [ "${CHROME_NO_SANDBOX:-1}" = "1" ]; then
   args+=("--no-sandbox")
 fi
 
+# ── 窗口铺满虚拟屏 ────────────────────────────────────────────────────
+# 容器里没有窗口管理器（Xvfb 只提供一块裸画布），Chromium 会按自己的启发式
+# 挑窗口尺寸：实测 1920x1080 的屏上开了 945x1060，noVNC 里看着就是"只有左半边"。
+# 有头模式显式给尺寸，别让它自己猜。
+# 用户在 CHROME_ARGS 里给了 --window-size 就不覆盖（尊重手动指定）。
+if [ "${MODE}" = "vnc" ] && ! printf '%s' "${CHROME_ARGS:-}" | grep -q -- "--window-size"; then
+  SW="${SCREEN%%x*}"                    # 1920x1080x24 -> 1920
+  _rest="${SCREEN#*x}"
+  SH="${_rest%%x*}"                     # 1920x1080x24 -> 1080
+  args+=("--window-size=${SW},${SH}" "--window-position=0,0")
+  echo "[entrypoint] 窗口尺寸对齐虚拟屏：${SW}x${SH}"
+fi
+
 # 附加参数按空格切开。这里故意不加引号：就是要让它支持
 # CHROME_ARGS="--lang=zh-CN --proxy-server=socks5://1.2.3.4:1080" 这种写法
 # shellcheck disable=SC2206
@@ -110,18 +123,32 @@ case "$MODE" in
     echo "[entrypoint] 看画面：http://<宿主机IP>:${NOVNC_PORT}/vnc.html?autoconnect=1&resize=scale"
     echo "[entrypoint] CDP 端口：0.0.0.0:${CDP_PORT}"
 
+    # ── 清掉上一次的 X 残留 ───────────────────────────────────────────
+    # docker restart / compose restart 不会重建容器，/tmp 里的东西还在：
+    # 上次的 /tmp/.X99-lock 和 /tmp/.X11-unix/X99 会残留，Xvfb 第二次启动直接报
+    # "Server is already active for display 99" 退出；而下面的就绪检测只要看到
+    # socket 存在就放行（残留的 socket 也算），于是 x11vnc 连不上、
+    # Chrome 报 "Missing X server or $DISPLAY"，容器进入崩溃循环。
+    # 容器里只有这一个 X server，删是安全的 —— 和上面清 SingletonLock 同理。
+    rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}"
+
     Xvfb "$DISPLAY" -screen 0 "$SCREEN" -nolisten tcp -ac &
     XVFB_PID=$!
-    # 等 X socket 就绪再起 x11vnc，否则第一次连接会失败；
-    # 同时盯着 Xvfb 有没有当场退出（多半是 /tmp/.X11-unix 不可写）
+    # 等 X socket 就绪再起 x11vnc，否则第一次连接会失败。
+    # 顺序很重要：先看进程还活着没有，再看 socket —— 反过来的话，残留的
+    # socket 会让循环立刻放行，把"Xvfb 已经死了"这件事盖掉。
     for _ in $(seq 1 50); do
-      [ -e "/tmp/.X11-unix/X${DISPLAY_NUM}" ] && break
       if ! kill -0 "$XVFB_PID" 2>/dev/null; then
         echo "Xvfb 启动失败，检查 /tmp/.X11-unix 是否可写" >&2
         exit 1
       fi
+      [ -e "/tmp/.X11-unix/X${DISPLAY_NUM}" ] && break
       sleep 0.1
     done
+    if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+      echo "Xvfb 启动失败（进程已退出）" >&2
+      exit 1
+    fi
 
     x11vnc -display "$DISPLAY" -forever -shared -nopw -rfbport "$VNC_PORT" -quiet -noxdamage &
     websockify --web=/usr/share/novnc "$NOVNC_PORT" "localhost:${VNC_PORT}" &

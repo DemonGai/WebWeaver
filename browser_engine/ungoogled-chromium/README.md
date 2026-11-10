@@ -22,6 +22,37 @@ ungoogled-chromium/
 157.0.8100.1/
 ```
 
+## 从 Docker Hub 直接拉（跳过本地构建）
+
+镜像已推到 [`demon1315132284/browser_engine`](https://hub.docker.com/r/demon1315132284/browser_engine)，
+一个内核一个 tag：
+
+| tag | 内容 |
+|---|---|
+| `ungoogled-chromium-156.0.8078.79` | 固定版本，可复现 |
+| `ungoogled-chromium` | 滚动标签，始终指向该内核最近一次构建 |
+
+```bash
+docker pull demon1315132284/browser_engine:ungoogled-chromium-156.0.8078.79
+```
+
+不用 compose 也能直接跑：
+
+```bash
+docker run -d --name wv-ungoogled \
+  -p 9222:9222 -p 6080:6080 \
+  -e MODE=vnc \
+  -e START_URL=about:blank \
+  --shm-size=1g --init --restart unless-stopped \
+  -v "$PWD/data:/data" \
+  demon1315132284/browser_engine:ungoogled-chromium-156.0.8078.79
+```
+
+`--shm-size=1g` 不能省（默认 64MB 会让渲染进程随机崩）。
+
+想继续用 compose 里的端口/卷配置、只是不本地构建：把 `docker-compose.yaml`
+的 `build:` 整段删掉，`image:` 改成上面那个名字，再 `docker compose up -d`。
+
 ## 构建与运行
 
 ```bash

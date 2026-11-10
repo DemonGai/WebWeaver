@@ -58,6 +58,42 @@ docker compose up -d --build        # 构建时 COPY 进 /usr/local/share/fonts/
 
 `fonts/` 在 `.gitignore` 里：微软字体不能重新分发，**只在自己机器上用**。
 
+## 从 Docker Hub 直接拉（跳过本地构建）
+
+镜像已推到 [`demon1315132284/browser_engine`](https://hub.docker.com/r/demon1315132284/browser_engine)，
+一个内核一个 tag：
+
+| tag | 内容 |
+|---|---|
+| `cloakbrowser-146.0.7680.177.5` | 固定版本，可复现 |
+| `cloakbrowser` | 滚动标签，始终指向该内核最近一次构建 |
+
+```bash
+docker pull demon1315132284/browser_engine:cloakbrowser-146.0.7680.177.5
+```
+
+不用 compose 也能直接跑（指纹照样运行时下发）：
+
+```bash
+docker run -d --name wv-cloakbrowser \
+  -p 9232:9222 -p 6082:6080 \
+  -e MODE=vnc \
+  -e FINGERPRINT_SEED=42817 \
+  -e FINGERPRINT_TIMEZONE=Asia/Shanghai \
+  -e FINGERPRINT_LOCALE=zh-CN \
+  --shm-size=1g --init --restart unless-stopped \
+  -v "$PWD/data:/data" \
+  demon1315132284/browser_engine:cloakbrowser-146.0.7680.177.5
+```
+
+`--shm-size=1g` 不能省（默认 64MB 会让渲染进程随机崩）。
+
+> 镜像里**不含** Windows 字体（微软字体不能重新分发），从 Hub 拉下来的版本
+> 字体指纹只靠内核自己派生。要补就本地重新构建，见下文。
+
+想继续用 compose 里的端口/卷配置、只是不本地构建：把 `docker-compose.yaml`
+的 `build:` 整段删掉，`image:` 改成上面那个名字，再 `docker compose up -d`。
+
 ## 换版本
 
 版本号 = 文件夹名 = 构建参数，三者同一个来源：

@@ -39,6 +39,43 @@ Cannot mount AppImage, please check your FUSE setup.
 `AppRun` 那三行本质就是 `export LD_LIBRARY_PATH` + `export CHROME_WRAPPER` + `exec chrome`，
 这两件事改到 `entrypoint.sh` 里做了，所以不需要 AppRun。
 
+## 从 Docker Hub 直接拉（跳过本地构建）
+
+镜像已推到 [`demon1315132284/browser_engine`](https://hub.docker.com/r/demon1315132284/browser_engine)，
+一个内核一个 tag：
+
+| tag | 内容 |
+|---|---|
+| `fingerprint-chromium-148.0.7778.215` | 固定版本，可复现 |
+| `fingerprint-chromium` | 滚动标签，始终指向该内核最近一次构建 |
+
+```bash
+docker pull demon1315132284/browser_engine:fingerprint-chromium-148.0.7778.215
+```
+
+不用 compose 也能直接跑（指纹照样运行时下发）：
+
+```bash
+docker run -d --name wv-fingerprint-chromium \
+  -p 9242:9222 -p 6084:6080 \
+  -e MODE=vnc \
+  -e FINGERPRINT_SEED=42817 \
+  -e FINGERPRINT_TIMEZONE=Asia/Shanghai \
+  -e FINGERPRINT_LOCALE=zh-CN \
+  -e FINGERPRINT_BRAND=Chrome \
+  --shm-size=1g --init --restart unless-stopped \
+  -v "$PWD/data:/data" \
+  demon1315132284/browser_engine:fingerprint-chromium-148.0.7778.215
+```
+
+`--shm-size=1g` 不能省（默认 64MB 会让渲染进程随机崩）。
+
+> 镜像里**不含** Windows 字体（微软字体不能重新分发）。这个内核自带 font
+> spoofing，所以从 Hub 拉下来直接能用；想补真实字体就本地重新构建，见下文。
+
+想继续用 compose 里的端口/卷配置、只是不本地构建：把 `docker-compose.yaml`
+的 `build:` 整段删掉，`image:` 改成上面那个名字，再 `docker compose up -d`。
+
 ## 换版本
 
 版本号 = AppImage 文件名里的版本 = 构建参数，同一个来源：

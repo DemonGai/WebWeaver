@@ -154,6 +154,33 @@ CloakBrowser 有 `--fingerprint-webrtc-ip=<ip>`，fingerprint-chromium **没有*
 所以真实出口 IP 只能靠代理本身保证 —— 这也是为什么 `CHROME_ARGS` 里一定要带
 `--proxy-server`，否则 WebRTC 和页面请求都是本机 IP。
 
+## 实测（148.0.7778.215，1920x1080，vnc 模式）
+
+同一个种子重启两次，逐项一致 —— 这正是这个内核存在的意义：
+
+| 项 | `seed=42817` | 备注 |
+|---|---|---|
+| `navigator.userAgent` | `... Chrome/148.0.0.0 Safari/537.36` | `platform=windows` |
+| `navigator.platform` | `Win32` | |
+| `navigator.webdriver` | `false` | |
+| `hardwareConcurrency` | `24` | 由种子派生，不可单独设 |
+| WebGL renderer | `ANGLE (Intel, Intel(R) Arc(TM) Graphics (0x00007D55) Direct3D11 vs_5_0 ps_5_0, D3D11)` | 伪装成 Windows D3D11 |
+| canvas `toDataURL` | 长度 `15418`，哈希 `367316564` | 重启后完全一致 |
+| 窗口 / 视口 | `1919x1079 @ (0,0)` / `1919x906` | 铺满虚拟屏 |
+
+换成 `seed=90001` 后：`hardwareConcurrency` 24 → 12、GPU 变成
+`NVIDIA GeForce RTX 3060 Laptop GPU`、canvas 哈希 `-991151691`。
+**同一个种子 → 同一个浏览器；换数字 → 换机器。**
+
+指纹文件通道也验过：`data/148.0.7778.215/fingerprint.json` 里写
+`brand: "Edge"`、`timezone: "Europe/London"`、`locale: "en-GB"`，重启后
+UA 末尾出现 `Edg/148.0.0.0`、`Intl` 时区变 `Europe/London`、`navigator.languages`
+变 `["en-GB","en"]`。
+
+> 查这些值不用装 Playwright，走 CDP 就够：`curl 127.0.0.1:9242/json/list`
+> 拿 `webSocketDebuggerUrl`，连上去 `Runtime.evaluate` 一段 JS 即可。
+
+
 ## 指纹库 → fingerprint-chromium 格式
 
 和 CloakBrowser 一样，它是「一个种子推导一切」，**不是逐项指定**。区别是它比
@@ -242,6 +269,13 @@ curl -s http://127.0.0.1:9242/json/list | jq -r '.[0].webSocketDebuggerUrl'
   桥过去。已验证 `/json/version` 返回的 `webSocketDebuggerUrl` 会跟随 Host 头
 - **profile 锁**：容器重建后 hostname 变，`SingletonLock` 会让 Chromium 拒绝启动，
   entrypoint 每次启动前清掉
+- **restart 后 Xvfb 起不来（崩溃循环）**：`docker restart` / `docker compose restart`
+  **不会重建容器**，`/tmp` 里的东西还在 —— 上次的 `/tmp/.X99-lock` 和
+  `/tmp/.X11-unix/X99` 残留，Xvfb 第二次启动直接报
+  `Server is already active for display 99` 退出。更隐蔽的是：如果就绪检测先看
+  socket 再看进程，残留的 socket 会让循环立刻放行，于是 x11vnc 连不上、
+  Chrome 报 `Missing X server or $DISPLAY`，容器进入 `Restarting` 循环。
+  现在启动前会先 `rm -f` 这两个文件，并且把检测顺序改成「先看进程活着没有」
 - **僵尸进程**：Chromium 会 fork 很多子进程，`init: true` 让 tini 收尸
 - **沙箱**：容器里一般起不来，默认 `--no-sandbox`（官方默认也是关的）
 - **中文字体**：不装 `fonts-noto-cjk` 的话中文页面是豆腐块，noVNC 里看着就是方块

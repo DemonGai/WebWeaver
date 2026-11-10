@@ -251,6 +251,13 @@ curl http://127.0.0.1:9232/json/version
   桥过去。已验证 `/json/version` 返回的 `webSocketDebuggerUrl` 会跟随 Host 头
 - **profile 锁**：容器重建后 hostname 变，`SingletonLock` 会让 Chromium 拒绝启动，
   entrypoint 每次启动前清掉
+- **restart 后 Xvfb 起不来（崩溃循环）**：`docker restart` / `docker compose restart`
+  **不会重建容器**，`/tmp` 里的东西还在 —— 上次的 `/tmp/.X99-lock` 和
+  `/tmp/.X11-unix/X99` 残留，Xvfb 第二次启动直接报
+  `Server is already active for display 99` 退出；如果就绪检测先看 socket 再看进程，
+  残留的 socket 会让循环立刻放行，于是 x11vnc 连不上、Chrome 报
+  `Missing X server or $DISPLAY`，容器进入 `Restarting` 循环。现在启动前会先
+  `rm -f` 这两个文件，并把检测顺序改成「先看进程活着没有」
 - **僵尸进程**：Chromium 会 fork 很多子进程，`init: true` 让 tini 收尸
 - **沙箱**：容器里一般起不来，默认 `--no-sandbox`（官方默认也是关的）
 - **中文字体**：不装 `fonts-noto-cjk` 的话中文页面是豆腐块，noVNC 里看着就是方块

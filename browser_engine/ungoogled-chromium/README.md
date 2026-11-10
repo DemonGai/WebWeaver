@@ -132,6 +132,13 @@ curl http://127.0.0.1:9222/json/version
 - **只绑 localhost**：Chromium 143+ 忽略 `--remote-debugging-address`，用 socat 桥接（见上一节）
 - **profile 被锁**：容器重建后 hostname 变了，Chromium 认为 profile 被别的机器占用会直接退出，
   entrypoint 每次启动前清掉 `SingletonLock/Cookie/Socket`
+- **restart 后 Xvfb 起不来（崩溃循环）**：`docker restart` / `docker compose restart`
+  **不会重建容器**，`/tmp` 里的东西还在 —— 上次的 `/tmp/.X99-lock` 和
+  `/tmp/.X11-unix/X99` 残留，Xvfb 第二次启动直接报
+  `Server is already active for display 99` 退出；如果就绪检测先看 socket 再看进程，
+  残留的 socket 会让循环立刻放行，于是 x11vnc 连不上、Chrome 报
+  `Missing X server or $DISPLAY`，容器进入 `Restarting` 循环。现在启动前会先
+  `rm -f` 这两个文件，并把检测顺序改成「先看进程活着没有」
 - **`/dev/shm` 太小**：默认 64MB 会让渲染进程随机崩，compose 里设了 `shm_size: 1gb`，
   启动参数也加了 `--disable-dev-shm-usage`
 - **字体缺失**：不装中文字体的话所有实例字体指纹一致，反而更容易被风控识别，

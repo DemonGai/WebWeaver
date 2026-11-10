@@ -1,0 +1,11 @@
+# Dockerfile 与编排文件本身不用进构建上下文
+Dockerfile
+docker-compose.yaml
+docker-compose.yml
+.env
+.env.example
+README.md
+.dockerignore
+
+# 运行时生成的 profile 目录
+data/

@@ -44,3 +44,22 @@ backend/browser_engine/**
 !backend/browser_engine/**/
 !backend/browser_engine/**/engine.json
 !backend/browser_engine/**/README.md
+
+# 根目录的 browser_engine/<引擎>/<版本>/：放的是真实二进制（单个版本 700MB+），
+# 只把容器构建文件和文档入库。加新版本只需把目录拷进来，不用改 git 规则。
+browser_engine/**
+!browser_engine/*/
+!browser_engine/**/
+!browser_engine/**/Dockerfile
+!browser_engine/**/docker-compose.yaml
+!browser_engine/**/docker-compose.yml
+!browser_engine/**/entrypoint.sh
+!browser_engine/**/.dockerignore
+!browser_engine/**/.env.example
+!browser_engine/**/README.md
+
+# 容器运行时生成的 profile 目录
+browser_engine/**/data/
+
+# 本机账号备注（含明文密码），绝不入库
+user.txt

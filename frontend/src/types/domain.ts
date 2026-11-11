@@ -329,23 +329,29 @@ export interface AuthUser {
   last_login_at: string | null
 }
 
-/* ── 内核管理（引擎维度） ─────────────────────────────── */
+/* ── 内核管理（镜像维度） ─────────────────────────────── */
+
+/** 本地的一个版本：同一个镜像的多个 tag 会被后端合并成一条 */
 export interface KernelVersion {
   version: string
-  base: string | null
-  arch: string | null
-  channel: string | null
+  /** 首选引用用的 tag：固定 tag 优先，没有才用滚动 tag */
+  tag: string
+  /** 完整镜像名，如 demon1315132284/browser_engine:cloakbrowser */
+  image_ref: string
+  image_id: string | null
+  digest: string | null
   size: string | null
-  released_at: string | null
-  packaged_at: string | null
-  source: string | null
-  /** 版本目录的绝对路径，排障时直接复制 */
-  path: string
-  /** 目录里有 meta.json 标记，才算下载完成 */
-  ready: boolean
+  size_bytes: number
+  /** 镜像构建时间（本地时区） */
+  created_at: string | null
+  /** 有滚动 tag 指向这个镜像，下次构建会被覆盖 */
+  rolling: boolean
+  /** 有固定版本 tag，可以钉住 */
+  pinned: boolean
+  tags: string[]
+  arch: string | null
   current: boolean
   instances: number
-  warning: string | null
 }
 
 export interface KernelCard {
@@ -361,14 +367,22 @@ export interface KernelCard {
   repo_url: string | null
   mirror_url: string | null
   is_primary: boolean
+
+  registry: string
+  /** Camoufox 这类还没做镜像的为 false */
+  supported: boolean
+  unsupported_reason: string | null
+
   current_version: string | null
+  current_ref: string | null
   latest_version: string | null
   update_available: boolean
-  downloaded: boolean
+  /** 本地至少有一个镜像 */
+  installed: boolean
   version_count: number
+  total_size: string | null
   instance_count: number
   stale_count: number
-  disk_path: string
   scanned_at: string
   versions: KernelVersion[]
   note: string | null
@@ -386,7 +400,10 @@ export interface KernelStat {
 export interface KernelPayload {
   stats: KernelStat[]
   cards: KernelCard[]
-  root: string
+  /** 镜像仓库，如 demon1315132284/browser_engine */
+  registry: string
+  docker_ok: boolean
+  docker_error: string | null
   scanned_at: string
   total_instances: number
   total_versions: number
@@ -413,88 +430,26 @@ export interface PrimaryResponse {
   message: string
 }
 
-/* ── 引擎档案（browser_engine/<slug>/engine.json，人工维护） ── */
-export type AcquireKind = 'pip' | 'archive' | 'manual'
-
-export interface EngineLink {
-  label: string
-  url: string
-  kind: 'release' | 'docs' | 'bucket' | 'mirror'
-}
-
-export interface EnginePackage {
-  kind: AcquireKind
-  os: string
-  arch: string
-  size: string | null
-  url: string | null
-  /** 上游没公示就留空，页面上标「未校验」，不要伪造 */
-  sha256: string | null
-  installer: string | null
-  pin: string | null
-  note: string | null
-}
-
-export interface EngineVersionSpec {
-  version: string
-  base: string | null
-  channel: string | null
-  released_at: string | null
-  notes: string | null
-  packages: EnginePackage[]
-}
-
-export interface AcquireSpec {
-  kind: AcquireKind
-  installer: string | null
-  pin: string | null
-  fetch: string[]
-  cache_dirs: string[]
-  executable: string | null
-  note: string | null
-}
-
-export interface EngineProfile {
-  schema: number
-  name: string
-  engine: string
-  tone: string | null
-  tagline: string | null
-  best_for: string | null
-  detection_level: string | null
-  pros: string[]
-  cons: string[]
-  install_notes: string[]
-  links: EngineLink[]
-  acquire: AcquireSpec | null
-  versions: EngineVersionSpec[]
-}
-
-export interface EngineVersionView extends EngineVersionSpec {
-  installed: boolean
-  installed_size: string | null
-  is_current: boolean
-  /** 磁盘上有、档案没登记（手工放进去的旧版本） */
-  on_disk_only: boolean
-}
-
 export interface KernelDetailPayload {
   slug: string
   card: KernelCard
-  profile: EngineProfile | null
-  profile_ok: boolean
-  profile_error: string | null
-  versions: EngineVersionView[]
+  versions: KernelVersion[]
   docs: string | null
   docs_path: string
-  install_hint: string | null
+  hint: string | null
+  /** 可以直接复制去跑的 docker run */
+  run_command: string | null
+  docker_ok: boolean
+  docker_error: string | null
 }
 
 export interface InstallJob {
   id: string
   slug: string
   version: string
-  kind: AcquireKind
+  tag: string
+  image_ref: string
+  kind: string
   status: 'running' | 'success' | 'failed'
   progress: number
   message: string

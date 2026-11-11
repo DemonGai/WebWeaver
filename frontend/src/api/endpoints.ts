@@ -72,9 +72,10 @@ export const endpoints = {
       browser_ids: browserIds,
     }),
 
-  /* 引擎详情 + 按档案里的下载源获取版本 */
+  /* 内核详情 + 拉取镜像 */
   kernelDetail: (slug: string) => api.get<KernelDetailPayload>(`/kernels/${slug}`),
-  installKernel: (slug: string, body: { version: string; os?: string; arch?: string }) =>
+  // tag 留空表示拉滚动 tag（该内核最近一次构建）
+  installKernel: (slug: string, body: { tag?: string; version?: string } = {}) =>
     api.post<InstallJob>(`/kernels/${slug}/install`, body),
   installJobs: () => api.get<InstallJob[]>('/kernels/jobs'),
   installJob: (id: string) => api.get<InstallJob>(`/kernels/jobs/${id}`),

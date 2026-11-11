@@ -54,7 +54,7 @@ from app.schemas.browser import (
     BrowserUpdate,
 )
 from app.schemas.domain import InstanceStatus
-from app.services import audit, kernel_scan
+from app.services import audit, kernel_image, kernel_scan
 
 # 端口只分配不监听：预留一段固定区间，取当前库里没被占用的最小号。
 # CDP 与 noVNC 的偏移（+3100）跟种子数据里的既有分配保持一致，方便对照日志
@@ -95,15 +95,22 @@ async def options(session: AsyncSession) -> BrowserOptions:
         (await session.scalars(select(Fingerprint).order_by(Fingerprint.platform))).all()
     )
 
+    # 一次取全本地镜像，四个内核共用；docker 不可用时一律当「没有可选版本」，
+    # 新建实例走内核当前版本兜底，不能让下拉框把整个页面拖挂
+    try:
+        images = kernel_image.list_images(kernel_scan.registry())
+    except kernel_image.DockerError:
+        images = []
+
     return BrowserOptions(
         groups=[BrowserOption(id=str(g.id), label=g.name, hint=g.code) for g in groups],
         kernels=[
             BrowserOption(id=str(k.id), label=k.name, hint=f"{k.engine} · {k.version}")
             for k in kernels
         ],
-        # 只列磁盘上确实下载好的版本；空列表时前端退回内核当前版本
+        # 只列本地确有镜像的版本；空列表时前端退回内核当前版本
         kernel_versions={
-            str(k.id): [v.version for v in kernel_scan.scan_versions(k.name) if v.ready]
+            str(k.id): [v.version for v in kernel_scan.scan_versions(k.name, images=images)]
             for k in kernels
         },
         accounts=[

@@ -1,31 +1,43 @@
-"""内核目录扫描的单元测试（不碰数据库）。"""
+"""内核识别层的单元测试：tag 解析、版本推导、去重合并（不碰数据库、不碰 docker）。"""
 
 from __future__ import annotations
 
-import json
-
-import pytest
-
-from app.core.config import settings
+from app.services.kernel_image import ImageInfo
 from app.services.kernel_scan import (
     engine_slug,
     human_size,
+    parse_tag,
     scan_versions,
     version_key,
 )
 
 
-@pytest.fixture
-def root(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(settings, "kernel_root", str(tmp_path))
-    return tmp_path
-
-
-def _write(root, slug: str, version: str, meta: dict | None) -> None:
-    directory = root / slug / version
-    directory.mkdir(parents=True, exist_ok=True)
-    if meta is not None:
-        (directory / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+def _image(
+    tag: str,
+    version: str | None,
+    *,
+    image_id: str | None = None,
+    size_mb: int = 500,
+    created: str = "2026-11-10T13:50:54.693761427Z",
+    digest: str | None = "sha256:abc123",
+    labels: dict[str, str] | None = None,
+) -> ImageInfo:
+    """造一个 ImageInfo。默认把版本写进 OCI 标签，跟真实镜像一致。"""
+    tag_labels = dict(labels or {})
+    if version:
+        tag_labels.setdefault("org.opencontainers.image.version", version)
+    return ImageInfo(
+        ref=f"demo/browser_engine:{tag}",
+        repository="demo/browser_engine",
+        tag=tag,
+        image_id=image_id or f"sha256:{tag}",
+        size_bytes=size_mb * 1024 * 1024,
+        created_at=created,
+        digest=digest,
+        arch="amd64",
+        os_name="linux",
+        labels=tag_labels or None,
+    )
 
 
 def test_version_key_compares_numerically() -> None:
@@ -41,58 +53,98 @@ def test_engine_slug_normalises_name() -> None:
     assert engine_slug(" Ungoogled Chromium ") == "ungoogled-chromium"
 
 
-def test_scan_reads_meta_and_sorts_desc(root) -> None:
-    _write(root, "cloakbrowser", "128.0.6613.2", {"version": "128.0.6613.2", "size_mb": 412})
-    _write(
-        root,
-        "cloakbrowser",
-        "128.0.6613.5",
-        {
-            "version": "128.0.6613.5",
-            "base": "Chromium 128",
-            "released_at": "2026-10-27",
-            "size_mb": 415,
-        },
-    )
-
-    versions = scan_versions("CloakBrowser")
-    assert [v.version for v in versions] == ["128.0.6613.5", "128.0.6613.2"]
-    assert all(v.ready for v in versions)
-    assert versions[0].size == "415 MB"
-    assert versions[1].size == "412 MB"
-    assert versions[0].base == "Chromium 128"
-    assert versions[0].released_at == "2026-10-27"
-
-
-def test_scan_falls_back_to_directory_size(root) -> None:
-    # meta 里没写 size_mb 时用目录实际体积兜底，不至于显示成空
-    _write(root, "camoufox", "1.0.0", {"version": "1.0.0"})
-    (root / "camoufox" / "1.0.0" / "payload.bin").write_bytes(b"0" * 2048)
-
-    version = scan_versions("Camoufox")[0]
-    assert version.size is not None
-    assert version.size.endswith("KB")
-
-
-def test_scan_flags_directories_without_meta(root) -> None:
-    _write(root, "cloakbrowser", "1.0.0", None)  # 有文件但没有 marker
-    (root / "cloakbrowser" / "1.0.0" / "chrome.exe").write_bytes(b"x")
-    _write(root, "cloakbrowser", "2.0.0", {"version": "2.0.0"})
-    (root / "cloakbrowser" / "3.0.0").mkdir(parents=True)  # 空目录
-
-    versions = scan_versions("CloakBrowser")
-    assert [v.version for v in versions] == ["3.0.0", "2.0.0", "1.0.0"]
-    broken = {v.version: v for v in versions if not v.ready}
-    assert set(broken) == {"1.0.0", "3.0.0"}
-    assert "meta.json" in broken["1.0.0"].warning
-    assert "为空" in broken["3.0.0"].warning
-
-
-def test_scan_returns_empty_for_unknown_engine(root) -> None:
-    assert scan_versions("NotInstalled") == []
-
-
 def test_human_size() -> None:
     assert human_size(0) == "—"
-    assert human_size(412 * 1024 * 1024) == "412 MB"
-    assert human_size(2 * 1024 * 1024 * 1024) == "2.0 GB"
+    assert human_size(512) == "512 B"
+    assert human_size(500 * 1024 * 1024) == "500 MB"
+    assert human_size(int(2.13 * 1024**3)) == "2.1 GB"
+
+
+def test_parse_tag_splits_version() -> None:
+    slugs = ["cloakbrowser", "chromium"]
+    assert parse_tag("cloakbrowser", slugs) == ("cloakbrowser", None)
+    assert parse_tag("cloakbrowser-146.0.7680.177.5", slugs) == (
+        "cloakbrowser",
+        "146.0.7680.177.5",
+    )
+
+
+def test_parse_tag_prefers_longest_slug() -> None:
+    # fingerprint-chromium 里也含 "chromium"，按最长前缀匹配才不会被截错
+    slugs = ["chromium", "fingerprint-chromium"]
+    owner, version = parse_tag("fingerprint-chromium-148.0.7778.215", slugs)
+    assert owner == "fingerprint-chromium"
+    assert version == "148.0.7778.215"
+
+
+def test_scan_merges_tags_of_same_image() -> None:
+    # 滚动 tag 与固定 tag 指向同一个镜像，应该合成一条版本
+    images = [
+        _image("cloakbrowser", "146.0.7680.177.5", image_id="sha256:aaa", size_mb=532),
+        _image(
+            "cloakbrowser-146.0.7680.177.5",
+            "146.0.7680.177.5",
+            image_id="sha256:aaa",
+            size_mb=532,
+        ),
+    ]
+    versions = scan_versions("CloakBrowser", images=images)
+
+    assert len(versions) == 1
+    item = versions[0]
+    assert item.version == "146.0.7680.177.5"
+    # 首选引用要用固定 tag：滚动 tag 会被下次构建覆盖
+    assert item.tag == "cloakbrowser-146.0.7680.177.5"
+    assert item.pinned is True
+    assert item.rolling is True
+    assert item.tags == ["cloakbrowser", "cloakbrowser-146.0.7680.177.5"]
+    assert item.size == "532 MB"
+
+
+def test_scan_sorts_newest_first() -> None:
+    images = [
+        _image("cloakbrowser-146.0.7680.10", "146.0.7680.10", image_id="sha256:a"),
+        _image("cloakbrowser-146.0.7680.9", "146.0.7680.9", image_id="sha256:b"),
+    ]
+    versions = scan_versions("cloakbrowser", images=images)
+    # 字符串排序会把 .10 排到 .9 前面，必须按数字比
+    assert [v.version for v in versions] == ["146.0.7680.10", "146.0.7680.9"]
+
+
+def test_scan_falls_back_to_tag_when_label_missing() -> None:
+    # 自己 build 的镜像可能没打 OCI 标签，退回从 tag 名切版本
+    images = [_image("cloakbrowser-9.9.9", None, image_id="sha256:zzz", labels={})]
+    versions = scan_versions("cloakbrowser", images=images)
+    assert versions[0].version == "9.9.9"
+
+
+def test_scan_marks_image_without_fixed_tag_as_rolling() -> None:
+    # 只有滚动 tag 时，页面要提示「下次构建会被覆盖」
+    images = [_image("cloakbrowser", "146.0.7680.177.5", image_id="sha256:aaa")]
+    item = scan_versions("cloakbrowser", images=images)[0]
+    assert item.pinned is False
+    assert item.rolling is True
+    assert item.tag == "cloakbrowser"
+
+
+def test_scan_ignores_other_engines() -> None:
+    images = [
+        _image("cloakbrowser-146.0", "146.0", image_id="sha256:a"),
+        _image("ungoogled-chromium-156.0", "156.0", image_id="sha256:b"),
+    ]
+    versions = scan_versions("cloakbrowser", images=images)
+    assert [v.version for v in versions] == ["146.0"]
+
+
+def test_scan_without_images_returns_empty() -> None:
+    assert scan_versions("cloakbrowser", images=[]) == []
+
+
+def test_pretty_time_converts_to_local() -> None:
+    from app.services.kernel_scan import pretty_time
+
+    # Docker 给的是 UTC（Z 结尾），页面上要显示本地时间：形状要是 YYYY-MM-DD HH:MM
+    value = pretty_time("2026-11-10T13:50:54.693761427Z")
+    assert value is not None
+    assert len(value) == 16 and "T" not in value and value[10] == " "
+    assert pretty_time(None) is None

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
 import { PageShell } from '@/components/Layout'
-import { Card } from '@/components/ui'
+import { Card, ProgressBar } from '@/components/ui'
 import { KernelMigrateDialog } from '@/components/KernelMigrateDialog'
 import {
   IconAlert,
@@ -23,7 +23,7 @@ import {
   IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
-import type { KernelCard, KernelStat, KernelVersion } from '@/types/domain'
+import type { InstallJob, KernelCard, KernelStat, KernelVersion } from '@/types/domain'
 
 const toneTile: Record<string, string> = {
   blue: 'bg-blue-50 text-blue-600',
@@ -50,6 +50,7 @@ export default function KernelsPage() {
   const [toast, setToast] = useState<Toast>(null)
   const [expanded, setExpanded] = useState<string[]>([])
   const [migrating, setMigrating] = useState<KernelCard | null>(null)
+  const [job, setJob] = useState<InstallJob | null>(null)
 
   useEffect(() => {
     if (!toast) return
@@ -59,14 +60,51 @@ export default function KernelsPage() {
 
   const notify = useCallback((tone: 'ok' | 'err', text: string) => setToast({ tone, text }), [])
 
+  // 拉取中每隔 1.5 秒问一次；结束时 refresh 一次让镜像状态跟上
+  const runningId = job && job.status === 'running' ? job.id : null
+  useEffect(() => {
+    if (!runningId) return
+    const timer = window.setInterval(() => {
+      endpoints
+        .installJob(runningId)
+        .then((next) => {
+          setJob(next)
+          if (next.status !== 'running') {
+            refresh()
+            notify(
+              next.status === 'success' ? 'ok' : 'err',
+              next.status === 'success'
+                ? `${next.version} 镜像已就绪`
+                : (next.error ?? '拉取失败'),
+            )
+          }
+        })
+        .catch(() => undefined)
+    }, 1500)
+    return () => window.clearInterval(timer)
+  }, [runningId, refresh, notify])
+
   const rescan = async () => {
     setBusy('rescan')
     try {
       await endpoints.rescanKernels()
       refresh()
-      notify('ok', '已重新扫描内核目录')
+      notify('ok', '已重新扫描本地镜像')
     } catch (err) {
       notify('err', err instanceof Error ? err.message : '扫描失败')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const pull = async (card: KernelCard) => {
+    setBusy(card.id)
+    try {
+      const created = await endpoints.installKernel(card.slug)
+      setJob(created)
+      notify('ok', `开始拉取 ${created.image_ref}`)
+    } catch (err) {
+      notify('err', err instanceof Error ? err.message : '拉取失败')
     } finally {
       setBusy('')
     }
@@ -77,7 +115,7 @@ export default function KernelsPage() {
     try {
       await endpoints.switchKernelVersion(card.id, version)
       refresh()
-      notify('ok', `${card.name} 当前版本已切到 ${version}，旧版本目录保留，可随时切回`)
+      notify('ok', `${card.name} 当前版本已切到 ${version}，旧镜像保留，可随时切回`)
     } catch (err) {
       notify('err', err instanceof Error ? err.message : '切换版本失败')
     } finally {
@@ -117,8 +155,9 @@ export default function KernelsPage() {
   const toggle = (id: string) =>
     setExpanded((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
 
-  const upgradeable = data.cards.filter((c) => c.update_available).length
-  const missing = data.cards.filter((c) => !c.downloaded).length
+  const supported = data.cards.filter((c) => c.supported)
+  const upgradeable = supported.filter((c) => c.update_available).length
+  const missing = supported.filter((c) => !c.installed).length
 
   return (
     <PageShell>
@@ -131,7 +170,7 @@ export default function KernelsPage() {
             {missing > 0 ? (
               <span className="chip bg-zinc-100 text-[11px] text-zinc-600">
                 <IconAlert size={11} />
-                {missing} 个内核未安装
+                {missing} 个内核未获取
               </span>
             ) : upgradeable > 0 ? (
               <span className="chip bg-blue-50 text-[11px] text-blue-600">
@@ -141,12 +180,12 @@ export default function KernelsPage() {
             ) : (
               <span className="chip bg-emerald-50 text-[11px] text-emerald-600">
                 <IconCheckCircle size={11} />
-                全部已是最新
+                镜像全部就绪
               </span>
             )}
           </div>
           <p className="mt-1.5 text-[12.5px] text-[var(--ink-500)]">
-            四套引擎固定；装了哪些版本、能不能更新，都以磁盘上的实际文件为准
+            四套引擎固定；本地有镜像就算可用，点「获取内核」直接 docker pull
           </p>
         </div>
         <button
@@ -159,6 +198,18 @@ export default function KernelsPage() {
           {busy === 'rescan' ? '扫描中…' : '重新扫描'}
         </button>
       </div>
+
+      {!data.docker_ok && (
+        <div className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 px-4 py-2.5 text-[12px] text-amber-800">
+          <IconAlert size={13} className="mt-[2px] shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">Docker 不可用，无法读取本地镜像</div>
+            <div className="mt-0.5 text-[11px] text-amber-700">
+              {data.docker_error ?? '请确认 Docker 已启动，并且 docker 命令在 PATH 里'}
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div
@@ -173,6 +224,53 @@ export default function KernelsPage() {
           <button type="button" onClick={() => setToast(null)} className="shrink-0 opacity-60">
             <IconX size={12} />
           </button>
+        </div>
+      )}
+
+      {job && (
+        <div className="mt-3 rounded-2xl border border-[var(--line)] bg-white px-4 py-3">
+          <div className="flex items-center gap-2 text-[12px]">
+            <span
+              className={`flex size-6 shrink-0 items-center justify-center rounded-full ${
+                job.status === 'success'
+                  ? 'bg-emerald-50 text-emerald-600'
+                  : job.status === 'failed'
+                    ? 'bg-rose-50 text-rose-600'
+                    : 'bg-blue-50 text-blue-600'
+              }`}
+            >
+              {job.status === 'success' ? (
+                <IconCheckCircle size={12} />
+              ) : job.status === 'failed' ? (
+                <IconAlert size={12} />
+              ) : (
+                <IconCloudDown size={12} />
+              )}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--ink-700)]">
+              {job.image_ref}
+            </span>
+            <span className="tnum shrink-0 text-[var(--ink-500)]">
+              {Math.round(job.progress * 100)}%
+            </span>
+            <span className="min-w-0 max-w-[38%] truncate text-[11px] text-[var(--ink-500)]">
+              {job.error ?? job.message}
+            </span>
+            {job.status !== 'running' && (
+              <button
+                type="button"
+                onClick={() => setJob(null)}
+                className="shrink-0 text-[var(--ink-400)] hover:text-[var(--ink-700)]"
+              >
+                <IconX size={12} />
+              </button>
+            )}
+          </div>
+          <ProgressBar
+            value={job.progress * 100}
+            tone={job.status === 'failed' ? 'rose' : job.status === 'success' ? 'emerald' : 'blue'}
+            className="mt-2"
+          />
         </div>
       )}
 
@@ -191,8 +289,10 @@ export default function KernelsPage() {
             card={card}
             busy={busy === card.id}
             expanded={expanded.includes(card.id)}
+            pulling={job?.status === 'running' && job.slug === card.slug}
             onToggle={() => toggle(card.id)}
             onActivate={(version) => activate(card, version)}
+            onPull={() => pull(card)}
             onMigrate={() => setMigrating(card)}
             onPrimary={() => makePrimary(card)}
           />
@@ -239,36 +339,48 @@ function KernelCardView({
   card,
   busy,
   expanded,
+  pulling,
   onToggle,
   onActivate,
+  onPull,
   onMigrate,
   onPrimary,
 }: {
   card: KernelCard
   busy: boolean
   expanded: boolean
+  pulling: boolean
   onToggle: () => void
   onActivate: (version: string) => void
+  onPull: () => void
   onMigrate: () => void
   onPrimary: () => void
 }) {
+  const disabled = !card.supported
+
   return (
-    <Card className="flex h-full flex-col p-5">
+    <Card
+      className={`flex h-full flex-col p-5 ${disabled ? 'border-dashed bg-[#fcfcfd]' : ''}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
           <span
             className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${
-              toneTile[card.tone] ?? toneTile.sky
+              disabled ? 'bg-[#f4f4f5] text-[var(--ink-400)]' : (toneTile[card.tone] ?? toneTile.sky)
             }`}
           >
             <IconKernel size={16} />
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5">
-              <h3 className="text-[14px] font-semibold tracking-tight text-[var(--ink-900)]">
+              <h3
+                className={`text-[14px] font-semibold tracking-tight ${
+                  disabled ? 'text-[var(--ink-500)]' : 'text-[var(--ink-900)]'
+                }`}
+              >
                 {card.name}
               </h3>
-              {card.is_primary && (
+              {card.is_primary && !disabled && (
                 <span className="chip bg-[#18181b] px-1.5 text-[10px] text-white">
                   <IconStarFilled size={9} />
                   主力
@@ -286,11 +398,19 @@ function KernelCardView({
         </div>
         <span
           className={`chip shrink-0 ${
-            card.downloaded ? 'bg-emerald-50 text-emerald-600' : 'bg-zinc-100 text-zinc-500'
+            disabled
+              ? 'bg-[#f4f4f5] text-[var(--ink-500)]'
+              : card.installed
+                ? 'bg-emerald-50 text-emerald-600'
+                : 'bg-zinc-100 text-zinc-500'
           }`}
         >
           <span className="size-[5px] rounded-full bg-current" />
-          {card.downloaded ? `已下载 ${card.version_count} 个版本` : '未下载'}
+          {disabled
+            ? '暂未支持'
+            : card.installed
+              ? `镜像就绪 ${card.version_count} 个`
+              : '未获取'}
         </span>
       </div>
 
@@ -309,49 +429,67 @@ function KernelCardView({
         )}
       </div>
 
-      {/* 版本 */}
-      <div className="mt-3.5 rounded-xl bg-[#fafafa] px-3.5 py-3">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <div className="text-[10.5px] text-[var(--ink-400)]">当前版本</div>
-            <div className="tnum mt-1 flex items-baseline gap-1.5 text-[17px] leading-none font-semibold">
-              <span className={card.downloaded ? 'text-[var(--ink-900)]' : 'text-[var(--ink-400)]'}>
-                {card.current_version ?? '—'}
-              </span>
-              {!card.downloaded && card.current_version && (
-                <span className="text-[10px] font-normal text-rose-500">磁盘缺失</span>
-              )}
+      {/* 镜像版本 */}
+      <div className={`mt-3.5 rounded-xl px-3.5 py-3 ${disabled ? 'bg-[#fafafa]' : 'bg-[#fafafa]'}`}>
+        {disabled ? (
+          <div className="py-2 text-center">
+            <p className="text-[12px] font-medium text-[var(--ink-500)]">暂未支持，敬请期待</p>
+            <p className="mt-1 text-[10.5px] leading-relaxed text-[var(--ink-400)]">
+              {card.unsupported_reason ?? '该内核还在做镜像，做好后这里会出现拉取入口'}
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <div className="text-[10.5px] text-[var(--ink-400)]">当前版本</div>
+                <div className="tnum mt-1 flex items-baseline gap-1.5 text-[17px] leading-none font-semibold">
+                  <span
+                    className={
+                      card.installed ? 'text-[var(--ink-900)]' : 'text-[var(--ink-400)]'
+                    }
+                  >
+                    {card.current_version ?? '—'}
+                  </span>
+                  {!card.installed && (
+                    <span className="text-[10px] font-normal text-[var(--ink-400)]">未获取</span>
+                  )}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10.5px] text-[var(--ink-400)]">本地最新</div>
+                <div className="tnum mt-1 text-[12px] font-medium text-[var(--ink-700)]">
+                  {card.latest_version ?? '—'}
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="text-right">
-            <div className="text-[10.5px] text-[var(--ink-400)]">磁盘最新</div>
-            <div className="tnum mt-1 text-[12px] font-medium text-[var(--ink-700)]">
-              {card.latest_version ?? '—'}
-            </div>
-          </div>
-        </div>
 
-        {card.update_available && card.latest_version && (
-          <div className="mt-2.5 flex items-center justify-between gap-2 rounded-lg bg-blue-50 px-2.5 py-1.5">
-            <span className="flex min-w-0 items-center gap-1 text-[11px] text-blue-700">
-              <IconArrowUpRight size={11} className="shrink-0" />
-              <span className="truncate">磁盘上已有 {card.latest_version}，可切换为当前版本</span>
-            </span>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onActivate(card.latest_version as string)}
-              className="shrink-0 rounded-full bg-blue-600 px-2.5 py-1 text-[10.5px] font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
-            >
-              启用
-            </button>
-          </div>
-        )}
+            {card.update_available && card.latest_version && (
+              <div className="mt-2.5 flex items-center justify-between gap-2 rounded-lg bg-blue-50 px-2.5 py-1.5">
+                <span className="flex min-w-0 items-center gap-1 text-[11px] text-blue-700">
+                  <IconArrowUpRight size={11} className="shrink-0" />
+                  <span className="truncate">本地已有 {card.latest_version}，可切换为当前版本</span>
+                </span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onActivate(card.latest_version as string)}
+                  className="shrink-0 rounded-full bg-blue-600 px-2.5 py-1 text-[10.5px] font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
+                >
+                  启用
+                </button>
+              </div>
+            )}
 
-        {!card.downloaded && (
-          <p className="mt-2 text-[10.5px] leading-relaxed text-[var(--ink-500)]">
-            还没有安装任何版本，进详情页选一个版本获取即可
-          </p>
+            {!card.installed && (
+              <p className="mt-2 text-[10.5px] leading-relaxed text-[var(--ink-500)]">
+                点「获取内核」会执行{' '}
+                <code className="font-mono text-[10px] text-[var(--ink-700)]">
+                  docker pull {card.registry}:{card.slug}
+                </code>
+              </p>
+            )}
+          </>
         )}
       </div>
 
@@ -359,9 +497,12 @@ function KernelCardView({
       <div className="mt-3 space-y-1.5 text-[11px] text-[var(--ink-400)]">
         <div className="flex items-center gap-1.5">
           <IconBox size={11} className="shrink-0" />
-          <span className="truncate font-mono text-[10.5px]" title={card.disk_path}>
-            {card.disk_path}
+          <span className="truncate font-mono text-[10.5px]" title={card.registry}>
+            {card.registry}:{card.slug}
           </span>
+          {card.total_size && (
+            <span className="ml-auto shrink-0 tnum text-[10.5px]">{card.total_size}</span>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className="flex items-center gap-1">
@@ -386,21 +527,34 @@ function KernelCardView({
             onClick={onToggle}
             className="inline-flex h-7 items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 text-[11px] font-medium text-[var(--ink-700)] hover:bg-[#f7f7f8]"
           >
-            版本列表 {card.version_count}
+            镜像版本 {card.version_count}
             <IconChevronDown
               size={11}
               className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
             />
           </button>
         )}
-        {!card.downloaded && (
-          <Link
-            to={`/kernels/${card.slug}`}
-            className="btn-dark !h-7 !px-3 !text-[11px]"
+        {!disabled && !card.installed && (
+          <button
+            type="button"
+            onClick={onPull}
+            disabled={busy || pulling}
+            className="btn-dark !h-7 !px-3 !text-[11px] disabled:opacity-60"
           >
             <IconCloudDown size={11} />
-            获取内核
-          </Link>
+            {pulling ? '拉取中…' : '获取内核'}
+          </button>
+        )}
+        {!disabled && card.installed && (
+          <button
+            type="button"
+            onClick={onPull}
+            disabled={busy || pulling}
+            className="inline-flex h-7 items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 text-[11px] font-medium text-[var(--ink-700)] hover:bg-[#f7f7f8] disabled:opacity-50"
+          >
+            <IconRefresh size={11} />
+            {pulling ? '拉取中…' : '拉取最新'}
+          </button>
         )}
         {card.stale_count > 0 && (
           <button
@@ -416,12 +570,10 @@ function KernelCardView({
         <button
           type="button"
           onClick={onPrimary}
-          disabled={card.is_primary || busy}
-          className="ml-auto inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] font-medium transition-colors disabled:cursor-default disabled:opacity-50 ${
-            card.is_primary
-              ? 'text-[var(--ink-400)]'
-              : 'text-[var(--ink-700)] hover:bg-[#f4f4f5]'
-          }"
+          disabled={card.is_primary || busy || disabled}
+          className={`ml-auto inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] font-medium transition-colors disabled:cursor-default disabled:opacity-50 ${
+            card.is_primary ? 'text-[var(--ink-400)]' : 'text-[var(--ink-700)] hover:bg-[#f4f4f5]'
+          }`}
         >
           <IconStarFilled size={11} />
           {card.is_primary ? '当前主力' : '设为主力'}
@@ -439,22 +591,22 @@ function KernelCardView({
         <div className="mt-3 overflow-hidden rounded-xl border border-[var(--line)]">
           {card.versions.length === 0 ? (
             <div className="py-8 text-center text-[11.5px] text-[var(--ink-400)]">
-              该内核目录下还没有任何版本
+              本地还没有这个内核的镜像
             </div>
           ) : (
             <table className="w-full table-fixed">
               <colgroup>
-                <col className="w-[38%]" />
-                <col className="w-[15%]" />
-                <col className="w-[22%]" />
-                <col className="w-[10%]" />
+                <col className="w-[42%]" />
+                <col className="w-[14%]" />
+                <col className="w-[20%]" />
+                <col className="w-[9%]" />
                 <col className="w-[15%]" />
               </colgroup>
               <thead>
                 <tr className="border-b border-[var(--line)] bg-[#fcfcfd]">
-                  <th className="table-th !py-2 !pl-3.5">版本 / 基线</th>
+                  <th className="table-th !py-2 !pl-3.5">版本 / 镜像 tag</th>
                   <th className="table-th !py-2">大小</th>
-                  <th className="table-th !py-2">落盘时间</th>
+                  <th className="table-th !py-2">构建时间</th>
                   <th className="table-th !py-2">实例</th>
                   <th className="table-th !py-2 !pr-3.5 text-right">操作</th>
                 </tr>
@@ -462,7 +614,7 @@ function KernelCardView({
               <tbody>
                 {card.versions.map((version) => (
                   <VersionRow
-                    key={version.version}
+                    key={version.image_ref}
                     item={version}
                     busy={busy}
                     onActivate={() => onActivate(version.version)}
@@ -495,21 +647,25 @@ function VersionRow({
           </span>
           {item.current ? (
             <span className="chip bg-emerald-50 text-[10px] text-emerald-600">当前</span>
-          ) : item.ready ? (
-            <span className="chip bg-[#f4f4f5] text-[10px] text-[var(--ink-500)]">已就绪</span>
           ) : (
-            <span className="chip bg-amber-50 text-[10px] text-amber-600" title={item.warning ?? ''}>
-              未就绪
+            <span className="chip bg-[#f4f4f5] text-[10px] text-[var(--ink-500)]">已就绪</span>
+          )}
+          {!item.pinned && (
+            <span
+              className="chip bg-amber-50 text-[10px] text-amber-600"
+              title="只有滚动 tag，下次构建会被覆盖"
+            >
+              滚动
             </span>
           )}
         </div>
-        <div className="mt-0.5 truncate text-[10px] text-[var(--ink-400)]">
-          {item.base ?? item.warning ?? '—'}
+        <div className="mt-0.5 truncate font-mono text-[10px] text-[var(--ink-400)]">
+          {item.tag}
         </div>
       </td>
       <td className="table-td !py-2 tnum text-[11px] text-[var(--ink-700)]">{item.size ?? '—'}</td>
       <td className="table-td !py-2 tnum text-[11px] text-[var(--ink-500)]">
-        {item.packaged_at ?? '—'}
+        {item.created_at ?? '—'}
       </td>
       <td className="table-td !py-2 tnum text-[11px] text-[var(--ink-700)]">
         {item.instances || '—'}
@@ -517,7 +673,7 @@ function VersionRow({
       <td className="table-td !py-2 !pr-3.5 text-right">
         <button
           type="button"
-          disabled={item.current || !item.ready || busy}
+          disabled={item.current || busy}
           onClick={onActivate}
           className="inline-flex h-6.5 items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 text-[10.5px] font-medium text-[var(--ink-700)] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:opacity-40"
         >

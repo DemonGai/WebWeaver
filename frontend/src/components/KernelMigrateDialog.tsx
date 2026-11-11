@@ -31,9 +31,11 @@ export function KernelMigrateDialog({
 
   const versionItems = useMemo(
     () =>
-      (card?.versions ?? [])
-        .filter((v) => v.ready)
-        .map((v) => ({ value: v.version, label: v.version, count: v.instances })),
+      (card?.versions ?? []).map((v) => ({
+        value: v.version,
+        label: v.version,
+        count: v.instances,
+      })),
     [card],
   )
 

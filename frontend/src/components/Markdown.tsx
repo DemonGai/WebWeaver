@@ -15,9 +15,32 @@ type Block =
   | { type: 'ol'; items: string[] }
   | { type: 'code'; lang: string; code: string }
   | { type: 'quote'; text: string }
+  | { type: 'table'; head: string[]; rows: string[][]; align: Align[] }
   | { type: 'hr' }
 
-const BLOCK_START = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```)/
+type Align = 'left' | 'center' | 'right'
+
+const TABLE_ROW = /^\s*\|.*\|\s*$/
+const BLOCK_START = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```|\|)/
+
+/** 表格行 → 单元格；行首尾的竖线要先去掉，否则会多出两个空单元格 */
+function splitRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+}
+
+function parseAlign(separator: string[]): Align[] {
+  return separator.map((cell) => {
+    const left = cell.startsWith(':')
+    const right = cell.endsWith(':')
+    if (left && right) return 'center'
+    return right ? 'right' : 'left'
+  })
+}
 
 function parseBlocks(src: string): Block[] {
   const lines = src.replace(/\r\n/g, '\n').split('\n')
@@ -85,6 +108,27 @@ function parseBlocks(src: string): Block[] {
         i += 1
       }
       blocks.push({ type: 'quote', text: buf.join(' ') })
+      continue
+    }
+
+    // 表格：连续若干行 |...|，第二行是 |---|---| 分隔行
+    if (TABLE_ROW.test(line)) {
+      const rows: string[] = []
+      while (i < lines.length && TABLE_ROW.test(lines[i])) {
+        rows.push(lines[i])
+        i += 1
+      }
+      const head = splitRow(rows[0])
+      const separator = rows.length > 1 ? splitRow(rows[1]) : []
+      const hasSeparator =
+        separator.length > 0 && separator.every((cell) => /^:?-{2,}:?$/.test(cell))
+      const body = (hasSeparator ? rows.slice(2) : rows.slice(1)).map(splitRow)
+      blocks.push({
+        type: 'table',
+        head,
+        rows: body,
+        align: hasSeparator ? parseAlign(separator) : [],
+      })
       continue
     }
 
@@ -229,6 +273,47 @@ export function Markdown({ text }: { text: string }) {
               >
                 {inline(block.text, key)}
               </blockquote>
+            )
+          case 'table':
+            return (
+              <div
+                key={key}
+                className="my-2.5 overflow-x-auto rounded-xl border border-[var(--line)]"
+              >
+                <table className="w-full border-collapse text-[11.5px]">
+                  <thead>
+                    <tr className="border-b border-[var(--line)] bg-[#fcfcfd]">
+                      {block.head.map((cell, col) => (
+                        <th
+                          key={col}
+                          style={{ textAlign: block.align[col] ?? 'left' }}
+                          className="px-2.5 py-1.5 font-medium text-[var(--ink-600)]"
+                        >
+                          {inline(cell, `${key}-h${col}`)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, line) => (
+                      <tr
+                        key={line}
+                        className="border-b border-[var(--line)] last:border-0"
+                      >
+                        {row.map((cell, col) => (
+                          <td
+                            key={col}
+                            style={{ textAlign: block.align[col] ?? 'left' }}
+                            className="px-2.5 py-1.5 align-top text-[var(--ink-700)]"
+                          >
+                            {inline(cell, `${key}-${line}-${col}`)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )
           case 'hr':
             return <hr key={key} className="my-3 border-t border-[var(--line)]" />

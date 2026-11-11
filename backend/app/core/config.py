@@ -58,14 +58,21 @@ class Settings(BaseSettings):
     # 是否在异常日志中附带变量快照（含敏感数据的项目应保持 False）
     log_diagnose: bool = False
 
-    # ── 内核文件 ──────────────────────────────────────────────────────
-    # 内核目录根：相对路径以 backend/ 为基准。目录约定见 app/services/kernel_scan.py
-    # 目录名固定为 browser_engine（存放各家浏览器内核的发行包解压结果）
+    # ── 内核镜像 ──────────────────────────────────────────────────────
+    # 内核以 Docker 镜像形式分发：这个仓库下每个 tag 对应一个内核的一个版本。
+    # tag 命名见 app/services/kernel_scan.py 的 parse_tag()，形如
+    # `cloakbrowser`（滚动）与 `cloakbrowser-146.0.7680.177.5`（固定版本）。
+    # 「有没有这个内核」只看本地镜像，不再扫磁盘目录。
+    kernel_image_registry: str = "demon1315132284/browser_engine"
+    # docker 可执行文件；容器内跑后端时通常是 docker 或 /usr/bin/docker
+    kernel_docker_bin: str = "docker"
+    # 单个镜像拉取超时（秒）。500MB 压缩层的国内速度下留足余量
+    kernel_image_pull_timeout: int = 1800
+
+    # ── 内核文件（旧：磁盘目录方式，已弃用） ───────────────────────────
+    # 保留字段只为兼容还没迁移完的部署，新逻辑不再读写这个目录
     kernel_root: str = "browser_engine"
-    # pip 通道装内核时用的索引；与 pyproject 里的默认索引保持一致，国内装包快
     kernel_pip_index: str = "https://pypi.tuna.tsinghua.edu.cn/simple"
-    # 大包下载走 GitHub 加速站，形如 https://gh-proxy.com/ 。留空则直连；
-    # 直连时 github release 资源在国内只有 ~30 KB/s（536MB 要 5 小时），基本等于卡死
     kernel_download_mirror: str = ""
 
 

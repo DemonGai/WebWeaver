@@ -1,18 +1,18 @@
-"""内核池：把「数据库台账 + 磁盘版本目录」拼成页面要的卡片数据，并提供版本切换与实例迁移。
+"""内核池：把「台账 + 本地 Docker 镜像」拼成页面要的卡片数据。
 
 设计要点：
 
-- **磁盘是版本真相**：能装哪些版本、哪个版本更新，全部来自扫描，
-  不在数据库里维护一份可能过期的版本清单。
-- **数据库只记指针**：``kernels.version`` 是当前生效版本，
-  ``browsers.kernel_version`` 是实例实际跑的版本。升级只是移动指针，
-  旧版本目录原样保留，随时可以切回去。
-- **升级不改老实例**：切换当前版本后，老实例继续留在旧版本上（``stale``），
-  直到被显式批量迁移。这样升级不会在一次操作里把全部实例推上未经灰度验证的版本。
+- **镜像即真相**：本地 ``docker image ls`` 里有这个内核的 tag，就算它有版本；
+  一个都没有就是「未获取」。不再扫磁盘目录、不再读 ``meta.json``。
+- **数据库只记指针**：``kernels.version`` 是当前生效版本（存版本号不存 tag，
+  因为滚动 tag 会飘）。升级只是移动指针，旧镜像留在本地随时可以切回去。
+- **升级不碰老实例**：切换当前版本后，老实例继续留在旧版本上（``stale``），
+  直到被显式批量迁移。
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from uuid import UUID
 
@@ -29,7 +29,6 @@ from app.models import (
     KernelStatus,
 )
 from app.schemas.kernels import (
-    EngineVersionView,
     KernelCard,
     KernelDetailPayload,
     KernelInstance,
@@ -39,31 +38,43 @@ from app.schemas.kernels import (
     MigrationResult,
     PrimaryResponse,
 )
-from app.services import audit, kernel_install, kernel_profile, kernel_scan
-from app.services.kernel_scan import engine_slug, scan_versions, version_key
+from app.services import audit, kernel_image, kernel_scan
+from app.services.kernel_scan import engine_slug, human_size, version_key
 
-# 4 套引擎的展示属性（配色 / 一句话定位）。目录名做 key，
-# 库里新增了计划外的内核也不会崩，走 DEFAULT_SPEC 兜底。
-ENGINE_SPECS: dict[str, dict[str, str]] = {
+# 展示属性（配色 / 定位 / 端口）。端口按内核错开，四个可以同时跑。
+ENGINE_SPECS: dict[str, dict[str, object]] = {
     "cloakbrowser": {
         "tone": "blue",
         "tagline": "Chromium 源码级反检测，主力内核",
+        "cdp": 9232,
+        "novnc": 6082,
     },
     "camoufox": {
         "tone": "amber",
         "tagline": "Firefox 源码级反检测，跨引擎备份",
+        "cdp": None,
+        "novnc": None,
     },
     "fingerprint-chromium": {
         "tone": "violet",
         "tagline": "指纹种子可复现，问题复现专用",
+        "cdp": 9242,
+        "novnc": 6084,
     },
     "ungoogled-chromium": {
         "tone": "zinc",
         "tagline": "去 Google 依赖的干净基线",
+        "cdp": 9222,
+        "novnc": 6080,
     },
 }
 
-DEFAULT_SPEC = {"tone": "sky", "tagline": "Chromium 定制内核"}
+DEFAULT_SPEC: dict[str, object] = {"tone": "sky", "tagline": "Chromium 定制内核", "cdp": None, "novnc": None}
+
+# 还没做成镜像的内核：页面上灰掉，只显示「暂未支持」
+UNSUPPORTED: dict[str, str] = {
+    "camoufox": "Firefox 系内核暂未提供镜像，敬请期待",
+}
 
 
 def _now() -> str:
@@ -73,6 +84,15 @@ def _now() -> str:
 def _effective_version(browser: Browser, kernel: Kernel) -> str | None:
     """实例实际使用的版本：为空表示跟随内核当前版本（历史数据口径）。"""
     return browser.kernel_version or kernel.version
+
+
+def _pick_current(versions: list[KernelVersion], stored: str | None) -> KernelVersion | None:
+    """当前版本：台账登记的版本号在本地就认它，否则退到最新镜像。"""
+    if stored:
+        for item in versions:
+            if item.version == stored:
+                return item
+    return versions[0] if versions else None
 
 
 async def _browsers_of(session: AsyncSession, kernel_ids: list[UUID]) -> list[tuple[Browser, str]]:
@@ -90,14 +110,25 @@ async def _browsers_of(session: AsyncSession, kernel_ids: list[UUID]) -> list[tu
     return [(browser, group or "未分组") for browser, group in rows]
 
 
+async def _load_images() -> tuple[list[kernel_image.ImageInfo], bool, str | None]:
+    """一次拿全本地镜像；docker 不可用时返回空列表 + 原因。"""
+    ok, reason = await asyncio.to_thread(kernel_image.available)
+    if not ok:
+        return [], False, reason
+    try:
+        images = await asyncio.to_thread(kernel_image.list_images, kernel_scan.registry())
+    except kernel_image.DockerError as exc:
+        return [], False, str(exc)
+    return images, True, None
+
+
 async def payload(session: AsyncSession) -> KernelPayload:
-    """扫描 4 个引擎目录 + 读台账，组装完整页面数据。"""
+    """读台账 + 扫本地镜像，组装页面数据。"""
     kernels = list(
-        (
-            await session.scalars(select(Kernel).order_by(Kernel.is_primary.desc(), Kernel.name))
-        ).all()
+        (await session.scalars(select(Kernel).order_by(Kernel.is_primary.desc(), Kernel.name))).all()
     )
     browsers = await _browsers_of(session, [k.id for k in kernels])
+    images, docker_ok, docker_error = await _load_images()
     scanned_at = _now()
 
     by_kernel: dict[UUID, list[tuple[Browser, str]]] = {}
@@ -106,49 +137,58 @@ async def payload(session: AsyncSession) -> KernelPayload:
 
     cards: list[KernelCard] = []
     for kernel in kernels:
-        spec = ENGINE_SPECS.get(engine_slug(kernel.name), DEFAULT_SPEC)
-        versions = scan_versions(kernel.name)
-        ready_versions = [v for v in versions if v.ready]
-        latest = ready_versions[0].version if ready_versions else None
-        current = kernel.version or None
+        slug = engine_slug(kernel.name)
+        spec = ENGINE_SPECS.get(slug, DEFAULT_SPEC)
+        reason = UNSUPPORTED.get(slug)
+        supported = reason is None
 
-        # 每个版本上有多少台实例
+        versions = kernel_scan.scan_versions(kernel.name, images=images) if supported else []
+        current = _pick_current(versions, kernel.version)
+
         usage: dict[str, int] = {}
         stale = 0
         for browser, _group in by_kernel.get(kernel.id, []):
             effective = _effective_version(browser, kernel)
             if effective:
                 usage[effective] = usage.get(effective, 0) + 1
-            if current and effective != current:
+            if current and effective != current.version:
                 stale += 1
-        for version in versions:
-            version.instances = usage.get(version.version, 0)
-            version.current = version.version == current
+        for item in versions:
+            item.instances = usage.get(item.version, 0)
+            item.current = bool(current and item.version == current.version)
 
+        latest = versions[0].version if versions else None
         cards.append(
             KernelCard(
                 id=str(kernel.id),
-                slug=engine_slug(kernel.name),
+                slug=slug,
                 name=kernel.name,
                 engine=kernel.engine,
                 channel=_channel_label(kernel.channel),
                 arch=kernel.arch,
-                tone=spec["tone"],
-                tagline=kernel.note or spec["tagline"],
+                tone=str(spec["tone"]),
+                tagline=kernel.note or str(spec["tagline"]),
                 detection_level=kernel.detection_level,
                 repo_url=kernel.repo_url,
                 mirror_url=kernel.mirror_url,
                 is_primary=kernel.is_primary,
-                current_version=current,
+                registry=kernel_scan.registry(),
+                supported=supported,
+                unsupported_reason=reason,
+                current_version=current.version if current else None,
+                current_ref=current.image_ref if current else None,
                 latest_version=latest,
                 update_available=bool(
-                    latest and (current is None or version_key(latest) > version_key(current))
+                    latest
+                    and (current is None or version_key(latest) > version_key(current.version))
                 ),
-                downloaded=bool(ready_versions),
-                version_count=len(ready_versions),
+                installed=bool(versions),
+                version_count=len(versions),
+                total_size=(
+                    human_size(sum(item.size_bytes for item in versions)) if versions else None
+                ),
                 instance_count=len(by_kernel.get(kernel.id, [])),
                 stale_count=stale,
-                disk_path=str(kernel_scan.engine_dir(kernel.name)),
                 scanned_at=scanned_at,
                 versions=versions,
                 note=kernel.note,
@@ -156,9 +196,11 @@ async def payload(session: AsyncSession) -> KernelPayload:
         )
 
     total_instances = sum(card.instance_count for card in cards)
-    downloaded = sum(1 for card in cards if card.downloaded)
-    updatable = sum(1 for card in cards if card.update_available)
+    supported_cards = [card for card in cards if card.supported]
+    installed = sum(1 for card in supported_cards if card.installed)
+    updatable = sum(1 for card in supported_cards if card.update_available)
     stale_total = sum(card.stale_count for card in cards)
+    total_size = sum(sum(item.size_bytes for item in card.versions) for card in cards)
 
     if not total_instances:
         instances_hint = "暂无实例绑定"
@@ -171,27 +213,27 @@ async def payload(session: AsyncSession) -> KernelPayload:
                 key="engines",
                 label="内核引擎",
                 value=str(len(cards)),
-                hint="固定 4 套",
+                hint=f"{len(supported_cards)} 套已支持",
                 tone="dark",
                 icon="layers",
             ),
             KernelStat(
-                key="downloaded",
-                label="已下载",
-                value=f"{downloaded}/{len(cards)}",
+                key="installed",
+                label="镜像就绪",
+                value=f"{installed}/{len(supported_cards)}",
                 hint=(
-                    f"{sum(c.version_count for c in cards)} 个版本"
-                    if downloaded
-                    else "还没有装任何版本"
+                    f"共占用 {human_size(total_size)}"
+                    if installed
+                    else "还没有拉取任何镜像"
                 ),
                 tone="emerald",
                 icon="download",
             ),
             KernelStat(
                 key="update",
-                label="可更新",
+                label="可切换",
                 value=str(updatable),
-                hint="磁盘上已有更新版本" if updatable else "全部已是最新",
+                hint="本地已有更新的镜像" if updatable else "全部已是最新",
                 tone="blue",
                 icon="trend",
             ),
@@ -205,74 +247,58 @@ async def payload(session: AsyncSession) -> KernelPayload:
             ),
         ],
         cards=cards,
-        root=str(kernel_scan.kernel_root()),
+        registry=kernel_scan.registry(),
+        docker_ok=docker_ok,
+        docker_error=docker_error,
         scanned_at=scanned_at,
         total_instances=total_instances,
         total_versions=sum(card.version_count for card in cards),
     )
 
 
-async def detail(session: AsyncSession, slug: str) -> KernelDetailPayload:
-    """单引擎详情：台账卡片 + 人工维护的档案 + 磁盘版本状态 + 正文。
+def _run_command(card: KernelCard, ref: str) -> str | None:
+    """拼一条能直接复制的 ``docker run``：端口按内核固定分配。"""
+    spec = ENGINE_SPECS.get(card.slug, DEFAULT_SPEC)
+    cdp, novnc = spec.get("cdp"), spec.get("novnc")
+    if not cdp or not novnc:
+        return None
+    return "\n".join(
+        [
+            f"docker run -d --name webweaver-{card.slug}",
+            f"  -p {cdp}:9222 -p {novnc}:6080",
+            "  -e MODE=vnc -e SCREEN=1920x1080x24",
+            "  --shm-size=1g --init",
+            f"  {ref}",
+        ]
+    )
 
-    档案写坏了不报错，``profile_ok=False`` 带回原因，页面照常展示磁盘状态。
-    """
+
+async def detail(session: AsyncSession, slug: str) -> KernelDetailPayload:
+    """单内核详情：台账卡片 + 本地镜像清单 + 说明文档。"""
     data = await payload(session)
     key = engine_slug(slug)
     card = next((item for item in data.cards if item.slug == key), None)
     if card is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="没有这个内核引擎")
 
-    loaded = kernel_profile.load(card.name)
-    profile = loaded.profile
-    on_disk = {item.version: item for item in card.versions if item.ready}
-
-    views: list[EngineVersionView] = []
-    for spec in profile.versions if profile else []:
-        disk = on_disk.pop(spec.version, None)
-        views.append(
-            EngineVersionView(
-                **spec.model_dump(),
-                installed=disk is not None,
-                installed_size=disk.size if disk else None,
-                is_current=spec.version == card.current_version,
-            )
-        )
-
-    # 磁盘上有、档案没登记的版本（手工放进去的旧版本）也要列出来，否则用户会以为丢了
-    for version, disk in on_disk.items():
-        views.append(
-            EngineVersionView(
-                version=version,
-                base=disk.base,
-                channel=disk.channel,
-                released_at=disk.released_at,
-                notes="档案里没有登记，仅在磁盘上发现",
-                installed=True,
-                installed_size=disk.size,
-                is_current=version == card.current_version,
-                on_disk_only=True,
-            )
-        )
-
-    views.sort(key=lambda item: version_key(item.version), reverse=True)
-    os_name, arch = kernel_install.default_platform()
+    ref = card.current_ref or f"{card.registry}:{card.slug}"
+    if not card.supported:
+        hint = card.unsupported_reason
+    elif card.installed:
+        hint = f"本地有 {card.version_count} 个版本，当前生效 {card.current_version}"
+    else:
+        hint = f"本地还没有镜像。点「获取内核」会执行 docker pull {card.registry}:{card.slug}"
 
     return KernelDetailPayload(
         slug=key,
         card=card,
-        profile=profile,
-        profile_ok=loaded.ok,
-        profile_error=loaded.error,
-        versions=views,
-        docs=kernel_profile.docs(card.name),
-        docs_path=str(kernel_profile.docs_path(card.name)),
-        install_hint=(
-            f"页面点「安装」会走 {profile.acquire.kind} 通道"
-            if profile and profile.acquire
-            else f"手动把发行包解压到 {card.disk_path}/<版本>/ 并写入 meta.json"
-        )
-        + f"；当前识别平台 {os_name}/{arch}",
+        versions=card.versions,
+        docs=kernel_scan.readme(card.name),
+        docs_path=str(kernel_scan.readme_path(card.name)),
+        hint=hint,
+        run_command=_run_command(card, ref) if card.supported else None,
+        docker_ok=data.docker_ok,
+        docker_error=data.docker_error,
     )
 
 
@@ -296,15 +322,27 @@ async def _get_kernel(session: AsyncSession, kernel_id: str) -> Kernel:
     return kernel
 
 
-def _require_installed(kernel: Kernel, version: str) -> KernelVersion:
-    for item in scan_versions(kernel.name):
-        if item.version == version and item.ready:
+def _require_installed(kernel: Kernel, version: str, versions: list[KernelVersion]) -> KernelVersion:
+    for item in versions:
+        if item.version == version:
             return item
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"{kernel.name} 目录里没有可用的 {version} 版本，请先把内核文件解压到 "
-        f"{kernel_scan.engine_dir(kernel.name) / version}",
+        detail=(
+            f"本地没有 {kernel.name} {version} 的镜像，请先拉取。"
+            f"当前仓库 {kernel_scan.registry()}"
+        ),
     )
+
+
+async def _versions_of(kernel: Kernel) -> list[KernelVersion]:
+    images, ok, reason = await _load_images()
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Docker 不可用：{reason}",
+        )
+    return kernel_scan.scan_versions(kernel.name, images=images)
 
 
 async def switch_version(
@@ -315,16 +353,14 @@ async def switch_version(
     operator: str,
     request: Request | None = None,
 ) -> KernelPayload:
-    """把某个已落盘的版本设为该内核的当前版本；旧版本目录保留不动。"""
+    """把某个本地镜像设为该内核的当前版本；旧镜像不删。"""
     kernel = await _get_kernel(session, kernel_id)
-    _require_installed(kernel, version)
+    _require_installed(kernel, version, await _versions_of(kernel))
 
     before = kernel.version
     if before != version:
         kernel.version = version
-        if kernel.latest_version is None or version_key(version) > version_key(
-            kernel.latest_version
-        ):
+        if kernel.latest_version is None or version_key(version) > version_key(kernel.latest_version):
             kernel.latest_version = version
         await audit.record(
             session,
@@ -353,11 +389,11 @@ async def migrate(
 ) -> MigrationResult:
     """把实例批量迁到指定版本。不传 ids 时视为「该内核下所有不在目标版本上的实例」。"""
     kernel = await _get_kernel(session, kernel_id)
-    _require_installed(kernel, version)
+    _require_installed(kernel, version, await _versions_of(kernel))
 
     rows = (await session.execute(select(Browser).where(Browser.kernel_id == kernel.id))).scalars()
     targets: list[Browser] = []
-    wanted = {bid for bid in browser_ids}
+    wanted = set(browser_ids)
     for browser in rows:
         if wanted and str(browser.id) not in wanted:
             continue

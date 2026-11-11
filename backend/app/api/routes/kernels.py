@@ -1,7 +1,8 @@
-"""内核管理接口（引擎维度）。
+"""内核管理接口。
 
 四个引擎固定，不支持"接入新内核"；能变的只有版本——
-版本由磁盘目录决定，接口只负责扫描、切当前版本、把实例批量迁到新版本。
+版本由本地 Docker 镜像决定（镜像 tag 即版本），接口负责扫描、拉取镜像、
+切当前版本、把实例批量迁到新版本。
 """
 
 from typing import Annotated
@@ -26,7 +27,7 @@ from app.services import audit, kernel_install, kernel_pool
 router = APIRouter(tags=["kernels"])
 
 
-@router.get("/kernels", response_model=KernelPayload, summary="内核引擎与磁盘版本")
+@router.get("/kernels", response_model=KernelPayload, summary="内核引擎与本地镜像版本")
 async def get_kernels(session: SessionDep) -> KernelPayload:
     return await kernel_pool.payload(session)
 
@@ -34,7 +35,7 @@ async def get_kernels(session: SessionDep) -> KernelPayload:
 @router.post(
     "/kernels/rescan",
     response_model=KernelPayload,
-    summary="重新扫描内核目录",
+    summary="重新扫描本地镜像",
 )
 async def rescan_kernels(session: SessionDep) -> KernelPayload:
     # 扫描是只读操作：不写审计，避免刷新页面把审计刷满
@@ -69,7 +70,7 @@ async def get_install_job(job_id: str) -> InstallJob:
 @router.get(
     "/kernels/{slug}",
     response_model=KernelDetailPayload,
-    summary="引擎详情：档案 + 磁盘状态 + 正文",
+    summary="内核详情：本地镜像清单 + 说明文档",
 )
 async def kernel_detail(slug: str, session: SessionDep) -> KernelDetailPayload:
     return await kernel_pool.detail(session, slug)
@@ -79,7 +80,7 @@ async def kernel_detail(slug: str, session: SessionDep) -> KernelDetailPayload:
     "/kernels/{slug}/install",
     response_model=InstallJob,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="按档案里的下载源获取一个版本（pip / archive）",
+    summary="拉取内核镜像（docker pull）",
     dependencies=[Depends(require_permission("kernel:update"))],
 )
 async def install_kernel_version(
@@ -89,6 +90,7 @@ async def install_kernel_version(
     user: CurrentUser,
     session: SessionDep,
 ) -> InstallJob:
+    target = payload.tag or payload.version or "最新"
     # 先写审计再开工：审计失败就直接返回，不留一个悄悄在跑的后台任务
     await audit.record(
         session,
@@ -96,12 +98,17 @@ async def install_kernel_version(
         resource_type=AuditResourceType.kernel,
         resource_id=slug,
         operator=user.username,
-        detail=f"获取内核 {slug} {payload.version}",
+        detail=f"拉取内核镜像 {slug} {target}",
         request=request,
     )
 
     try:
-        return await kernel_install.start(slug, payload.version, payload.os, payload.arch)
+        return await kernel_install.start(slug, tag=payload.tag, version=payload.version)
+    except kernel_install.DockerError as exc:
+        # docker 没装/没起是环境问题，不是用户请求错，给 503 更准确
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -123,7 +130,7 @@ async def kernel_instances(
 @router.post(
     "/kernels/{kernel_id}/version",
     response_model=KernelPayload,
-    summary="切换当前版本（旧版本目录保留）",
+    summary="切换当前版本（旧镜像保留）",
     dependencies=[Depends(require_permission("kernel:update"))],
 )
 async def switch_kernel_version(

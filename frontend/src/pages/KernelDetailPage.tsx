@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
 import { PageShell } from '@/components/Layout'
 import { Card, ProgressBar } from '@/components/ui'
-import { Markdown, InlineMarkdown } from '@/components/Markdown'
+import { Markdown } from '@/components/Markdown'
 import {
   IconAlert,
   IconArrowLeft,
@@ -14,6 +14,7 @@ import {
   IconCheckCircle,
   IconClipboard,
   IconCloudDown,
+  IconPlay,
   IconDownload,
   IconInfo,
   IconKernel,
@@ -23,14 +24,7 @@ import {
   IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
-import type {
-  AcquireKind,
-  EnginePackage,
-  EngineProfile,
-  EngineVersionView,
-  InstallJob,
-  KernelCard,
-} from '@/types/domain'
+import type { InstallJob, KernelCard, KernelVersion } from '@/types/domain'
 
 const toneTile: Record<string, string> = {
   blue: 'bg-blue-50 text-blue-600',
@@ -40,26 +34,6 @@ const toneTile: Record<string, string> = {
   zinc: 'bg-zinc-100 text-zinc-500',
   sky: 'bg-sky-50 text-sky-600',
   dark: 'bg-[#18181b] text-white',
-}
-
-const KIND_LABEL: Record<AcquireKind, string> = {
-  pip: '包管理器',
-  archive: '直链下载',
-  manual: '手动下载',
-}
-
-const LINK_LABEL: Record<string, string> = {
-  release: '发布页',
-  docs: '文档',
-  bucket: '索引站',
-  mirror: '镜像',
-}
-
-const OS_LABEL: Record<string, string> = {
-  windows: 'Windows',
-  linux: 'Linux',
-  macos: 'macOS',
-  any: '全平台',
 }
 
 type Toast = { tone: 'ok' | 'err'; text: string } | null
@@ -72,11 +46,10 @@ export default function KernelDetailPage() {
   )
 
   const [job, setJob] = useState<InstallJob | null>(null)
-  const [startedAt, setStartedAt] = useState(0)
-  const [nowMs, setNowMs] = useState(() => Date.now())
   const [busy, setBusy] = useState('')
   const [toast, setToast] = useState<Toast>(null)
   const [copied, setCopied] = useState('')
+  const [customTag, setCustomTag] = useState('')
 
   useEffect(() => {
     if (!toast) return
@@ -84,12 +57,9 @@ export default function KernelDetailPage() {
     return () => window.clearTimeout(timer)
   }, [toast])
 
-  const notify = useCallback(
-    (tone: 'ok' | 'err', text: string) => setToast({ tone, text }),
-    [],
-  )
+  const notify = useCallback((tone: 'ok' | 'err', text: string) => setToast({ tone, text }), [])
 
-  // 进页面时捡回正在跑的任务：刷新或离开再回来，后端那个任务还在，别让它「消失」
+  // 进页面捡回正在跑的任务：刷新或离开再回来，后端那个拉取还在跑
   useEffect(() => {
     let cancelled = false
     endpoints
@@ -97,11 +67,7 @@ export default function KernelDetailPage() {
       .then((list) => {
         if (cancelled) return
         const mine = list.find((item) => item.slug === slug && item.status === 'running')
-        if (mine) {
-          setJob(mine)
-          setStartedAt(Date.now())
-          setNowMs(Date.now())
-        }
+        if (mine) setJob(mine)
       })
       .catch(() => undefined)
     return () => {
@@ -109,15 +75,7 @@ export default function KernelDetailPage() {
     }
   }, [slug])
 
-  // 只轮询正在跑的任务；跑完那一下 refresh 一次，让磁盘状态跟上
   const runningId = job && job.status === 'running' ? job.id : null
-
-  // 秒表只用来告诉用户「它还在动」——后端下载阶段不细分进度，没有时长会让人以为卡死
-  useEffect(() => {
-    if (!runningId) return
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [runningId])
 
   useEffect(() => {
     if (!runningId) return
@@ -130,9 +88,7 @@ export default function KernelDetailPage() {
             refresh()
             notify(
               next.status === 'success' ? 'ok' : 'err',
-              next.status === 'success'
-                ? `${next.version} 已就绪，刷新后可设为当前版本`
-                : (next.error ?? '获取失败'),
+              next.status === 'success' ? `${next.version} 镜像已就绪` : (next.error ?? '拉取失败'),
             )
           }
         })
@@ -178,37 +134,22 @@ export default function KernelDetailPage() {
             </Link>
           </div>
         ) : (
-          <ErrorState message={error ?? '引擎详情加载失败'} onRetry={reload} />
+          <ErrorState message={error ?? '内核详情加载失败'} onRetry={reload} />
         )}
       </PageShell>
     )
   }
 
-  const { card, profile } = data
+  const { card } = data
 
-  const elapsedSec =
-    job && job.status === 'running' && startedAt > 0
-      ? Math.max(0, Math.floor((nowMs - startedAt) / 1000))
-      : 0
-  const elapsedText =
-    elapsedSec >= 60
-      ? `${Math.floor(elapsedSec / 60)} 分 ${elapsedSec % 60} 秒`
-      : `${elapsedSec} 秒`
-
-  const install = async (version: string, pkg: EnginePackage) => {
-    setBusy(version)
+  const pull = async (tag?: string) => {
+    setBusy(tag ?? 'pull')
     try {
-      const created = await endpoints.installKernel(slug, {
-        version,
-        os: pkg.os === 'any' ? undefined : pkg.os,
-        arch: pkg.arch === 'any' ? undefined : pkg.arch,
-      })
+      const created = await endpoints.installKernel(slug, tag ? { tag } : {})
       setJob(created)
-      setStartedAt(Date.now())
-      setNowMs(Date.now())
-      notify('ok', `已开始获取 ${version}（${KIND_LABEL[created.kind] ?? created.kind}）`)
+      notify('ok', `开始拉取 ${created.image_ref}`)
     } catch (err) {
-      notify('err', err instanceof Error ? err.message : '获取失败')
+      notify('err', err instanceof Error ? err.message : '拉取失败')
     } finally {
       setBusy('')
     }
@@ -219,7 +160,7 @@ export default function KernelDetailPage() {
     try {
       await endpoints.switchKernelVersion(card.id, version)
       refresh()
-      notify('ok', `当前版本已切到 ${version}，旧版本目录保留，老实例需要批量迁移才会跟进`)
+      notify('ok', `当前版本已切到 ${version}，旧镜像保留，老实例需要批量迁移才会跟进`)
     } catch (err) {
       notify('err', err instanceof Error ? err.message : '切换版本失败')
     } finally {
@@ -252,16 +193,10 @@ export default function KernelDetailPage() {
           内核管理
         </Link>
         <span>/</span>
-        <span className="text-[var(--ink-700)]">{profile?.name ?? card.name}</span>
+        <span className="text-[var(--ink-700)]">{card.name}</span>
       </div>
 
-      <Hero
-        card={card}
-        profile={profile}
-        installedCount={data.versions.filter((v) => v.installed).length}
-        onPrimary={makePrimary}
-        busy={busy === 'primary'}
-      />
+      <Hero card={card} onPrimary={makePrimary} busy={busy === 'primary'} />
 
       {toast && (
         <div
@@ -276,6 +211,18 @@ export default function KernelDetailPage() {
           <button type="button" onClick={() => setToast(null)} className="shrink-0 opacity-60">
             <IconX size={12} />
           </button>
+        </div>
+      )}
+
+      {!data.docker_ok && (
+        <div className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 px-4 py-2.5 text-[12px] text-amber-800">
+          <IconAlert size={13} className="mt-[2px] shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">Docker 不可用，读不到本地镜像</div>
+            <div className="mt-0.5 text-[11px] text-amber-700">
+              {data.docker_error ?? '请确认 Docker 已启动，并且 docker 命令在 PATH 里'}
+            </div>
+          </div>
         </div>
       )}
 
@@ -299,18 +246,15 @@ export default function KernelDetailPage() {
                 <IconCloudDown size={12} />
               )}
             </span>
-            <span className="font-medium text-[var(--ink-900)]">
-              {job.version} · {KIND_LABEL[job.kind] ?? job.kind}
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--ink-700)]">
+              {job.image_ref}
             </span>
-            <span className="tnum text-[var(--ink-500)]">{Math.round(job.progress * 100)}%</span>
-            <span className="min-w-0 flex-1 truncate text-[var(--ink-500)]">
+            <span className="tnum shrink-0 text-[var(--ink-500)]">
+              {Math.round(job.progress * 100)}%
+            </span>
+            <span className="min-w-0 max-w-[40%] truncate text-[11px] text-[var(--ink-500)]">
               {job.error ?? job.message}
             </span>
-            {job.status === 'running' && startedAt > 0 && (
-              <span className="tnum shrink-0 text-[10.5px] text-[var(--ink-400)]">
-                已运行 {elapsedText}
-              </span>
-            )}
             {job.status !== 'running' && (
               <button
                 type="button"
@@ -326,98 +270,113 @@ export default function KernelDetailPage() {
             tone={job.status === 'failed' ? 'rose' : job.status === 'success' ? 'emerald' : 'blue'}
             className="mt-2"
           />
-          {job.status === 'running' && job.progress >= 0.05 && job.progress < 0.7 && (
+          {job.status === 'running' && (
             <p className="mt-1.5 text-[10.5px] text-[var(--ink-400)]">
-              500MB 以上的包要下十几分钟；后端用 16 条连接抓取，单条连接会被限速到 30 KB/s
+              压缩层通常 500MB 左右，取决于上行带宽；进度按已完成层数估算
             </p>
           )}
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_306px] items-start gap-4">
-        <div className="space-y-4">
-          {profile && <IntroCard profile={profile} />}
+      {!card.supported ? (
+        <div className="mt-4 grid grid-cols-[minmax(0,1fr)_306px] items-start gap-4">
+          <Card className="p-8">
+            <div className="flex flex-col items-center gap-2 py-6 text-center">
+              <span className="flex size-12 items-center justify-center rounded-2xl bg-[#f4f4f5] text-[var(--ink-400)]">
+                <IconKernel size={22} />
+              </span>
+              <p className="text-[14px] font-semibold text-[var(--ink-700)]">暂未支持，敬请期待</p>
+              <p className="max-w-[420px] text-[12px] leading-relaxed text-[var(--ink-500)]">
+                {card.unsupported_reason ?? '这个内核暂时还没有做容器镜像。'}
+              </p>
+              <p className="max-w-[420px] text-[12px] leading-relaxed text-[var(--ink-400)]">
+                镜像做好后会在这里出现「获取内核」入口，不需要改任何配置。
+              </p>
+              <p className="mt-1 text-[11px] text-[var(--ink-400)]">
+                当前支持：CloakBrowser、fingerprint-chromium、ungoogled-chromium
+              </p>
+            </div>
+          </Card>
+          <aside className="space-y-4">
+            <RepoCard card={card} />
+          </aside>
+        </div>
+      ) : (
+        <div className="mt-4 grid grid-cols-[minmax(0,1fr)_306px] items-start gap-4">
+          <div className="space-y-4">
+            <VersionCard
+              card={card}
+              versions={data.versions}
+              hint={data.hint}
+              busy={busy}
+              runningVersion={job?.status === 'running' ? job.tag : null}
+              customTag={customTag}
+              onCustomTag={setCustomTag}
+              onPull={pull}
+              onActivate={activate}
+            />
 
-          <VersionCard
-            versionCount={data.versions.length}
-            versions={data.versions}
-            hint={data.install_hint}
-            busy={busy}
-            runningVersion={job?.status === 'running' ? job.version : null}
-            onInstall={install}
-            onActivate={activate}
-          />
-
-          {profile && profile.install_notes.length > 0 && (
-            <Card className="p-5">
-              <CardTitle icon={<IconInfo size={13} />} title="安装注意" />
-              <ul className="mt-3 space-y-1.5">
-                {profile.install_notes.map((note, index) => (
-                  <li key={index} className="flex gap-2 text-[12px] leading-relaxed text-[var(--ink-700)]">
-                    <span className="mt-[7px] size-[3.5px] shrink-0 rounded-full bg-[var(--ink-400)]" />
-                    <span className="min-w-0 flex-1">
-                      <InlineMarkdown text={note} />
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              {data.versions.length > 0 && (
-                <>
-                  <div className="mt-3.5 text-[11px] text-[var(--ink-400)]">
-                    手动放进来的版本也要落在这个位置，才会被扫描到
-                  </div>
-                  <div className="mt-1.5 flex items-center gap-2 rounded-xl bg-[#fafafa] px-3 py-2">
-                    <code className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-[var(--ink-700)]">
-                      {`${card.disk_path}\\<版本号>\\`}
-                    </code>
+            {data.run_command && (
+              <Card className="p-5">
+                <CardTitle
+                  icon={<IconPlay size={13} />}
+                  title="运行方式"
+                  extra={
                     <button
                       type="button"
-                      onClick={() => copy(`${card.disk_path}\\${data.versions[0].version}\\`, 'cmd')}
-                      className="shrink-0 text-[var(--ink-400)] hover:text-[var(--ink-700)]"
-                      title="复制目录"
+                      onClick={() => copy(data.run_command as string, 'run')}
+                      className="inline-flex items-center gap-1 text-[10.5px] text-[var(--ink-400)] hover:text-[var(--ink-700)]"
                     >
-                      {copied === 'cmd' ? <IconCheck size={12} /> : <IconClipboard size={12} />}
+                      {copied === 'run' ? <IconCheck size={11} /> : <IconClipboard size={11} />}
+                      复制
                     </button>
-                  </div>
-                </>
-              )}
-            </Card>
-          )}
+                  }
+                />
+                <pre className="mt-3 overflow-x-auto rounded-xl bg-[#18181b] px-3.5 py-3 font-mono text-[11px] leading-relaxed text-[#e4e4e7]">
+                  {data.run_command}
+                </pre>
+                <p className="mt-2 text-[10.5px] leading-relaxed text-[var(--ink-400)]">
+                  端口按内核固定分配，三个内核可以同时跑。<code className="font-mono">MODE=headless</code>{' '}
+                  只开 CDP，纯服务端部署更省资源。
+                </p>
+              </Card>
+            )}
 
-          {data.docs && (
-            <Card className="p-5">
-              <CardTitle
-                icon={<IconBox size={13} />}
-                title="引擎文档"
-                extra={<span className="font-mono text-[10px] text-[var(--ink-400)]">{data.docs_path}</span>}
-              />
-              <div className="mt-3">
-                <Markdown text={data.docs} />
-              </div>
-            </Card>
-          )}
-        </div>
+            {data.docs && (
+              <Card className="p-5">
+                <CardTitle
+                  icon={<IconBox size={13} />}
+                  title="引擎文档"
+                  extra={
+                    <span className="font-mono text-[10px] text-[var(--ink-400)]">
+                      browser_engine/{card.slug}/README.md
+                    </span>
+                  }
+                />
+                <div className="mt-3">
+                  <Markdown text={data.docs} />
+                </div>
+              </Card>
+            )}
+          </div>
 
-        <aside className="space-y-4">
-          <DiskCard
-            card={card}
-            installedCount={data.versions.filter((v) => v.installed).length}
-            knownCount={data.versions.length}
-          />
-          <LinkCard profile={profile} fallback={card} />
-          {!data.profile_ok && (
+          <aside className="space-y-4">
+            <ImageCard card={card} />
+            <RepoCard card={card} />
             <Card className="p-4">
-              <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-rose-600">
-                <IconAlert size={12} />
-                档案读取失败
+              <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-[var(--ink-700)]">
+                <IconInfo size={12} />
+                镜像从哪来
               </div>
               <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--ink-500)]">
-                {data.profile_error ?? 'engine.json 有问题'}。磁盘状态仍然可用，补齐档案后刷新即可。
+                页面只做 <code className="font-mono">docker pull</code>，不从上游下载二进制。
+                换仓库改后端{' '}
+                <code className="font-mono text-[10.5px]">kernel_image_registry</code> 即可。
               </p>
             </Card>
-          )}
-        </aside>
-      </div>
+          </aside>
+        </div>
+      )}
     </PageShell>
   )
 }
@@ -444,26 +403,19 @@ function CardTitle({
 
 function Hero({
   card,
-  profile,
-  installedCount,
   onPrimary,
   busy,
 }: {
   card: KernelCard
-  profile: EngineProfile | null
-  installedCount: number
   onPrimary: () => void
   busy: boolean
 }) {
-  const tagline = profile?.tagline ?? card.tagline
-  const links = profile?.links ?? []
-
   return (
     <div className="mt-3 flex items-start justify-between gap-5 rounded-2xl border border-[var(--line)] bg-white p-5">
       <div className="flex min-w-0 items-start gap-3.5">
         <span
           className={`flex size-11 shrink-0 items-center justify-center rounded-2xl ${
-            toneTile[profile?.tone ?? card.tone] ?? toneTile.sky
+            card.supported ? (toneTile[card.tone] ?? toneTile.sky) : 'bg-[#f4f4f5] text-[var(--ink-400)]'
           }`}
         >
           <IconKernel size={19} />
@@ -471,7 +423,7 @@ function Hero({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
             <h1 className="text-[20px] leading-tight font-semibold tracking-tight text-[var(--ink-900)]">
-              {profile?.name ?? card.name}
+              {card.name}
             </h1>
             {card.is_primary && (
               <span className="chip bg-[#18181b] px-1.5 text-[10px] text-white">
@@ -480,16 +432,19 @@ function Hero({
               </span>
             )}
             <span className="chip border border-[var(--line)] bg-white text-[10px] text-[var(--ink-500)]">
-              {profile?.engine ?? card.engine}
+              {card.engine}
             </span>
+            {!card.supported && (
+              <span className="chip bg-[#f4f4f5] text-[10px] text-[var(--ink-500)]">暂未支持</span>
+            )}
             <span className="text-[10.5px] text-[var(--ink-400)]">
               {card.channel} · {card.arch}
             </span>
           </div>
-          <p className="mt-1.5 text-[12.5px] text-[var(--ink-500)]">{tagline ?? '—'}</p>
-          {profile?.detection_level && (
+          <p className="mt-1.5 text-[12.5px] text-[var(--ink-500)]">{card.tagline}</p>
+          {card.detection_level && (
             <p className="mt-1 text-[11px] text-[var(--ink-400)]">
-              反检测层级：{profile.detection_level}
+              反检测层级：{card.detection_level}
             </p>
           )}
         </div>
@@ -497,24 +452,31 @@ function Hero({
 
       <div className="flex shrink-0 flex-col items-end gap-2">
         <div className="flex items-center gap-2">
-          {links[0] && (
-            <a href={links[0].url} target="_blank" rel="noreferrer" className="btn-ghost !h-7 !px-3 !text-[11.5px]">
-              {links[0].label}
+          {card.repo_url && (
+            <a
+              href={card.repo_url}
+              target="_blank"
+              rel="noreferrer"
+              className="btn-ghost !h-7 !px-3 !text-[11.5px]"
+            >
+              源仓库
               <IconArrowUpRight size={11} />
             </a>
           )}
           <button
             type="button"
             onClick={onPrimary}
-            disabled={card.is_primary || busy}
-            className={`btn-ghost !h-7 !px-3 !text-[11.5px] disabled:cursor-default disabled:opacity-50`}
+            disabled={card.is_primary || busy || !card.supported}
+            className="btn-ghost !h-7 !px-3 !text-[11.5px] disabled:cursor-default disabled:opacity-50"
           >
             <IconStarFilled size={11} />
             {card.is_primary ? '当前主力' : '设为主力'}
           </button>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-[var(--ink-400)]">
-          <span className="tnum">{installedCount} 个版本已落盘</span>
+          <span className="tnum">
+            {card.supported ? `${card.version_count} 个镜像` : '暂无镜像'}
+          </span>
           <span className="h-3 w-px bg-[var(--line)]" />
           <span className="tnum">{card.instance_count} 台实例</span>
           {card.stale_count > 0 && (
@@ -526,81 +488,38 @@ function Hero({
   )
 }
 
-function IntroCard({ profile }: { profile: EngineProfile }) {
-  return (
-    <Card className="p-5">
-      {profile.best_for && (
-        <div className="rounded-xl bg-[#fafafa] px-3.5 py-3">
-          <div className="text-[10.5px] text-[var(--ink-400)]">适合什么场景</div>
-          <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--ink-700)]">
-            <InlineMarkdown text={profile.best_for} />
-          </p>
-        </div>
-      )}
-
-      <div className="mt-3.5 grid grid-cols-2 gap-4">
-        <div>
-          <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-emerald-700">
-            <IconCheckCircle size={12} />
-            优势
-          </div>
-          <ul className="mt-2 space-y-1.5">
-            {profile.pros.map((item, index) => (
-              <li key={index} className="flex gap-2 text-[12px] leading-relaxed text-[var(--ink-700)]">
-                <IconCheck size={11} className="mt-[4px] shrink-0 text-emerald-500" />
-                <span className="min-w-0 flex-1">
-                  <InlineMarkdown text={item} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div>
-          <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-rose-600">
-            <IconAlert size={12} />
-            劣势
-          </div>
-          <ul className="mt-2 space-y-1.5">
-            {profile.cons.map((item, index) => (
-              <li key={index} className="flex gap-2 text-[12px] leading-relaxed text-[var(--ink-700)]">
-                <IconX size={11} className="mt-[4px] shrink-0 text-rose-400" />
-                <span className="min-w-0 flex-1">
-                  <InlineMarkdown text={item} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </Card>
-  )
-}
-
 function VersionCard({
+  card,
   versions,
-  versionCount,
   hint,
   busy,
   runningVersion,
-  onInstall,
+  customTag,
+  onCustomTag,
+  onPull,
   onActivate,
 }: {
-  versions: EngineVersionView[]
-  versionCount: number
+  card: KernelCard
+  versions: KernelVersion[]
   hint: string | null
   busy: string
   runningVersion: string | null
-  onInstall: (version: string, pkg: EnginePackage) => void
+  customTag: string
+  onCustomTag: (value: string) => void
+  onPull: (tag?: string) => void
   onActivate: (version: string) => void
 }) {
+  const rolling = `${card.registry}:${card.slug}`
+
   return (
     <Card className="p-5">
       <CardTitle
         icon={<IconDownload size={13} />}
-        title="可获取的版本"
+        title="本地镜像"
         extra={
           <span className="text-[10.5px] text-[var(--ink-400)]">
-            档案登记 {versionCount} 个 · 以页面选择为准
+            {versions.length} 个版本
+            {card.total_size ? ` · ${card.total_size}` : ''}
           </span>
         }
       />
@@ -608,23 +527,64 @@ function VersionCard({
       {hint && <p className="mt-2 text-[11px] text-[var(--ink-400)]">{hint}</p>}
 
       {versions.length === 0 ? (
-        <div className="py-10 text-center text-[12px] text-[var(--ink-400)]">
-          档案里还没登记可下载的版本
+        <div className="py-8 text-center">
+          <p className="text-[12px] text-[var(--ink-500)]">本地还没有这个内核的镜像</p>
+          <p className="mt-1 font-mono text-[10.5px] text-[var(--ink-400)]">{rolling}</p>
         </div>
       ) : (
         <div className="mt-3 space-y-2.5">
           {versions.map((item) => (
             <VersionBlock
-              key={item.version}
+              key={item.image_ref}
               item={item}
               busy={busy === item.version}
-              running={runningVersion === item.version}
-              onInstall={onInstall}
               onActivate={() => onActivate(item.version)}
             />
           ))}
         </div>
       )}
+
+      {/* 拉取 */}
+      <div className="mt-3.5 rounded-xl border border-[var(--line)] px-3.5 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[11.5px] font-medium text-[var(--ink-700)]">拉取最新（滚动 tag）</div>
+            <div className="mt-0.5 truncate font-mono text-[10px] text-[var(--ink-400)]">
+              {rolling}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onPull()}
+            disabled={busy !== '' || runningVersion !== null}
+            className="btn-dark !h-7 shrink-0 !px-3 !text-[11px] disabled:opacity-60"
+          >
+            <IconCloudDown size={11} />
+            {runningVersion === card.slug ? '拉取中…' : '获取内核'}
+          </button>
+        </div>
+
+        <div className="mt-3 flex items-center gap-2 border-t border-[var(--line)] pt-3">
+          <input
+            value={customTag}
+            onChange={(event) => onCustomTag(event.target.value)}
+            placeholder={`指定 tag，如 ${card.slug}-${card.latest_version ?? '148.0.7778.215'}`}
+            className="h-8 min-w-0 flex-1 rounded-lg border border-[var(--line)] bg-white px-2.5 font-mono text-[11px] text-[var(--ink-800)] outline-none placeholder:text-[var(--ink-400)] focus:border-[var(--ink-400)]"
+          />
+          <button
+            type="button"
+            onClick={() => onPull(customTag.trim())}
+            disabled={!customTag.trim() || busy !== '' || runningVersion !== null}
+            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-[var(--line)] bg-white px-3 text-[11px] font-medium text-[var(--ink-700)] hover:bg-[#f7f7f8] disabled:opacity-40"
+          >
+            <IconRefresh size={11} />
+            拉取
+          </button>
+        </div>
+        <p className="mt-1.5 text-[10px] text-[var(--ink-400)]">
+          tag 留空时会补上内核前缀；也可以直接粘完整的镜像名。
+        </p>
+      </div>
     </Card>
   )
 }
@@ -632,35 +592,12 @@ function VersionCard({
 function VersionBlock({
   item,
   busy,
-  running,
-  onInstall,
   onActivate,
 }: {
-  item: EngineVersionView
+  item: KernelVersion
   busy: boolean
-  running: boolean
-  onInstall: (version: string, pkg: EnginePackage) => void
   onActivate: () => void
 }) {
-  const [os, setOs] = useState<string>(() => item.packages[0]?.os ?? 'any')
-  const platforms = useMemo(() => {
-    const seen: string[] = []
-    item.packages.forEach((pkg) => {
-      if (!seen.includes(pkg.os)) seen.push(pkg.os)
-    })
-    return seen
-  }, [item.packages])
-
-  const pkg = useMemo(
-    () =>
-      item.packages.find((p) => p.os === os) ??
-      item.packages.find((p) => p.os === 'any') ??
-      item.packages[0],
-    [item.packages, os],
-  )
-
-  const manual = !pkg || pkg.kind === 'manual'
-
   return (
     <div className="rounded-xl border border-[var(--line)] px-3.5 py-3">
       <div className="flex items-start justify-between gap-2">
@@ -669,39 +606,31 @@ function VersionBlock({
             <span className="tnum text-[13px] font-semibold text-[var(--ink-900)]">
               {item.version}
             </span>
-            {item.is_current && (
+            {item.current && (
               <span className="chip bg-emerald-50 text-[10px] text-emerald-600">当前生效</span>
             )}
-            {item.installed ? (
-              <span className="chip bg-[#f4f4f5] text-[10px] text-[var(--ink-500)]">
-                已落盘{item.installed_size ? ` · ${item.installed_size}` : ''}
-              </span>
-            ) : (
-              <span className="chip bg-zinc-100 text-[10px] text-zinc-500">未下载</span>
+            <span className="chip bg-[#f4f4f5] text-[10px] text-[var(--ink-500)]">
+              已就绪{item.size ? ` · ${item.size}` : ''}
+            </span>
+            {!item.pinned && (
+              <span className="chip bg-amber-50 text-[10px] text-amber-600">只有滚动 tag</span>
             )}
-            {item.channel && (
-              <span className="text-[10px] text-[var(--ink-400)]">{item.channel} 通道</span>
-            )}
-            {item.released_at && (
-              <span className="tnum text-[10px] text-[var(--ink-400)]">发布于 {item.released_at}</span>
-            )}
-            {item.on_disk_only && (
-              <span className="chip bg-amber-50 text-[10px] text-amber-600">档案未登记</span>
+            {item.arch && (
+              <span className="text-[10px] text-[var(--ink-400)]">{item.arch}</span>
             )}
           </div>
-          <div className="mt-1 text-[11px] text-[var(--ink-500)]">
-            {item.base ?? '—'}
-            {item.notes && (
-              <>
-                {' · '}
-                <InlineMarkdown text={item.notes} />
-              </>
-            )}
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[10.5px] text-[var(--ink-500)]">
+            <span className="font-mono">{item.image_ref}</span>
+            {item.created_at && <span className="tnum">构建于 {item.created_at}</span>}
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
-          {item.installed && !item.is_current && (
+          {item.current ? (
+            <span className="inline-flex h-7 items-center rounded-full bg-emerald-50 px-2.5 text-[11px] font-medium text-emerald-600">
+              使用中
+            </span>
+          ) : (
             <button
               type="button"
               disabled={busy}
@@ -711,117 +640,49 @@ function VersionBlock({
               设为当前
             </button>
           )}
-          {!item.installed &&
-            (manual ? (
-              pkg?.url && (
-                <a
-                  href={pkg.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex h-7 items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 text-[11px] font-medium text-[var(--ink-700)] hover:bg-[#f7f7f8]"
-                >
-                  打开下载页
-                  <IconArrowUpRight size={10} />
-                </a>
-              )
-            ) : (
-              <button
-                type="button"
-                disabled={busy || running}
-                onClick={() => pkg && onInstall(item.version, pkg)}
-                className="inline-flex h-7 items-center gap-1 rounded-full bg-[#18181b] px-3 text-[11px] font-medium text-white transition-colors hover:bg-black disabled:opacity-50"
-              >
-                <IconCloudDown size={11} />
-                {busy || running ? '获取中…' : pkg?.kind === 'pip' ? '安装' : '下载'}
-              </button>
-            ))}
         </div>
       </div>
 
-      {item.packages.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-2">
-          {platforms.length > 1 ? (
-            <div className="flex items-center gap-1">
-              {platforms.map((name) => (
-                <button
-                  key={name}
-                  type="button"
-                  onClick={() => setOs(name)}
-                  className={`inline-flex h-6 items-center rounded-full px-2 text-[10.5px] font-medium transition-colors ${
-                    name === os
-                      ? 'bg-[#18181b] text-white'
-                      : 'bg-[#f4f4f5] text-[var(--ink-500)] hover:bg-[#e9e9ec]'
-                  }`}
-                >
-                  {OS_LABEL[name] ?? name}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <span className="text-[10.5px] text-[var(--ink-400)]">{OS_LABEL[os] ?? os}</span>
-          )}
-          <span className="text-[10.5px] text-[var(--ink-400)]">
-            {[pkg?.arch && pkg.arch !== 'any' ? pkg.arch : '', pkg?.size ?? '']
-              .filter(Boolean)
-              .join(' · ')}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-[var(--line)] pt-2">
+        <span className="text-[10px] text-[var(--ink-400)]">tag</span>
+        {item.tags.map((tag) => (
+          <span
+            key={tag}
+            className={`chip px-1.5 font-mono text-[10px] ${
+              tag === item.tag
+                ? 'bg-[#18181b] text-white'
+                : 'bg-[#f4f4f5] text-[var(--ink-500)]'
+            }`}
+          >
+            {tag}
           </span>
-          <span className="chip bg-[#f4f4f5] px-1.5 text-[10px] text-[var(--ink-500)]">
-            {KIND_LABEL[pkg?.kind ?? 'manual'] ?? pkg?.kind}
+        ))}
+        {item.digest && (
+          <span
+            className="ml-auto font-mono text-[10px] text-[var(--ink-400)]"
+            title={item.digest}
+          >
+            {item.digest.slice(0, 19)}
           </span>
-          {pkg?.sha256 ? (
-            <span className="chip bg-emerald-50 px-1.5 text-[10px] text-emerald-600">sha256 已登记</span>
-          ) : (
-            <span
-              className="chip bg-zinc-100 px-1.5 text-[10px] text-zinc-500"
-              title="上游没公示校验值，下载后不会核对"
-            >
-              未校验
-            </span>
-          )}
-          {pkg?.url && (
-            <a
-              href={pkg.url}
-              target="_blank"
-              rel="noreferrer"
-              className="ml-auto inline-flex items-center gap-0.5 text-[10.5px] text-[var(--ink-400)] hover:text-[var(--ink-700)]"
-            >
-              原始地址
-              <IconArrowUpRight size={10} />
-            </a>
-          )}
-        </div>
-      )}
-
-      {pkg?.note && (
-        <div className="mt-1.5 text-[10.5px] text-[var(--ink-400)]">
-          <InlineMarkdown text={pkg.note} />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
 
-function DiskCard({
-  card,
-  installedCount,
-  knownCount,
-}: {
-  card: KernelCard
-  installedCount: number
-  knownCount: number
-}) {
+function ImageCard({ card }: { card: KernelCard }) {
   return (
     <Card className="p-4">
       <CardTitle
         icon={<IconMonitor size={13} />}
-        title="磁盘状态"
+        title="镜像状态"
         extra={
           <span
             className={`chip ${
-              card.downloaded ? 'bg-emerald-50 text-emerald-600' : 'bg-zinc-100 text-zinc-500'
+              card.installed ? 'bg-emerald-50 text-emerald-600' : 'bg-zinc-100 text-zinc-500'
             }`}
           >
-            {card.downloaded ? '已安装' : '未安装'}
+            {card.installed ? '已就绪' : '未获取'}
           </span>
         }
       />
@@ -831,24 +692,26 @@ function DiskCard({
         <div className="mt-0.5 flex items-baseline gap-1.5">
           <span
             className={`tnum text-[16px] leading-none font-semibold ${
-              card.downloaded ? 'text-[var(--ink-900)]' : 'text-[var(--ink-400)]'
+              card.installed ? 'text-[var(--ink-900)]' : 'text-[var(--ink-400)]'
             }`}
           >
             {card.current_version ?? '—'}
           </span>
-          {!card.downloaded && card.current_version && (
-            <span className="text-[10px] text-rose-500">磁盘缺失</span>
+          {!card.installed && (
+            <span className="text-[10px] text-[var(--ink-400)]">未获取</span>
           )}
         </div>
+        {card.current_ref && (
+          <div className="mt-1 truncate font-mono text-[10px] text-[var(--ink-400)]">
+            {card.current_ref}
+          </div>
+        )}
       </div>
 
       <dl className="mt-3 space-y-1.5 text-[11.5px]">
-        <Row label="磁盘最新" value={card.latest_version ?? '—'} />
-        <Row
-          label="已落盘版本"
-          value={installedCount > 0 ? `${installedCount} 个` : `0 个（档案登记 ${knownCount}）`}
-          tone={installedCount === 0 ? 'muted' : undefined}
-        />
+        <Row label="本地最新" value={card.latest_version ?? '—'} />
+        <Row label="镜像版本" value={`${card.version_count} 个`} tone={card.version_count ? undefined : 'muted'} />
+        <Row label="占用空间" value={card.total_size ?? '—'} />
         <Row label="绑定实例" value={`${card.instance_count} 台`} />
         <Row
           label="待迁移"
@@ -860,14 +723,8 @@ function DiskCard({
 
       <div className="mt-3 flex items-start gap-1.5 border-t border-[var(--line)] pt-2.5 text-[10.5px] text-[var(--ink-400)]">
         <IconBox size={11} className="mt-[1px] shrink-0" />
-        <span className="min-w-0 font-mono break-words">
-          {/* 按反斜杠切开再加 wbr：只在路径分隔符处换行，不会把 camoufox 断成 c/amoufox */}
-          {card.disk_path.split(/(?<=\\)/).map((part, index) => (
-            <span key={index}>
-              {part}
-              <wbr />
-            </span>
-          ))}
+        <span className="min-w-0 font-mono break-all">
+          {card.registry}:{card.slug}
         </span>
       </div>
     </Card>
@@ -901,46 +758,34 @@ function Row({
   )
 }
 
-function LinkCard({ profile, fallback }: { profile: EngineProfile | null; fallback: KernelCard }) {
-  const links = profile?.links?.length
-    ? profile.links
-    : [
-        ...(fallback.repo_url
-          ? [{ label: 'GitHub 源仓库', url: fallback.repo_url, kind: 'release' as const }]
-          : []),
-        ...(fallback.mirror_url
-          ? [{ label: 'Gitee 镜像', url: fallback.mirror_url, kind: 'mirror' as const }]
-          : []),
-      ]
+function RepoCard({ card }: { card: KernelCard }) {
+  const links = [
+    ...(card.repo_url ? [{ label: 'GitHub 源仓库', url: card.repo_url }] : []),
+    ...(card.mirror_url ? [{ label: 'Gitee 镜像', url: card.mirror_url }] : []),
+    { label: 'Docker Hub 镜像仓库', url: `https://hub.docker.com/r/${card.registry}` },
+  ]
 
   return (
     <Card className="p-4">
-      <CardTitle icon={<IconArrowUpRight size={13} />} title="下载源与文档" />
-      {links.length === 0 ? (
-        <p className="mt-3 text-[11px] text-[var(--ink-400)]">档案里没有登记外链</p>
-      ) : (
-        <ul className="mt-2.5 space-y-1">
-          {links.map((link) => (
-            <li key={link.url}>
-              <a
-                href={link.url}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[11.5px] text-[var(--ink-700)] transition-colors hover:bg-[#f7f7f8]"
-              >
-                <span className="chip shrink-0 bg-[#f4f4f5] px-1.5 text-[9.5px] text-[var(--ink-500)]">
-                  {LINK_LABEL[link.kind] ?? link.kind}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{link.label}</span>
-                <IconArrowUpRight size={10} className="shrink-0 text-[var(--ink-400)]" />
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
+      <CardTitle icon={<IconArrowUpRight size={13} />} title="来源与文档" />
+      <ul className="mt-2.5 space-y-1">
+        {links.map((link) => (
+          <li key={link.url}>
+            <a
+              href={link.url}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[11.5px] text-[var(--ink-700)] transition-colors hover:bg-[#f7f7f8]"
+            >
+              <span className="min-w-0 flex-1 truncate">{link.label}</span>
+              <IconArrowUpRight size={10} className="shrink-0 text-[var(--ink-400)]" />
+            </a>
+          </li>
+        ))}
+      </ul>
       <div className="mt-2 flex items-center gap-1 text-[10px] text-[var(--ink-400)]">
         <IconRefresh size={10} />
-        档案随仓库更新，改完刷新本页即可
+        镜像与文档随仓库更新，拉取后刷新本页即可
       </div>
     </Card>
   )

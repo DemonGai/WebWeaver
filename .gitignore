@@ -59,6 +59,8 @@ browser_engine/**
 !browser_engine/**/README.md
 !browser_engine/**/*.sh
 !browser_engine/**/fingerprint.example.json
+# Docker Hub 仓库主页的 Overview 正文，直接贴到仓库设置里
+!browser_engine/DOCKERHUB.md
 # fonts/ 里是自己机器的微软字体，不重新分发；只放行占位文件让目录能存在
 # （Dockerfile 要 COPY fonts/，缺目录会构建失败）
 !browser_engine/**/fonts/.gitkeep

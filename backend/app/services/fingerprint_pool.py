@@ -535,7 +535,11 @@ def _absorb(fp: Fingerprint, result: fingerprint_probe.ProbeResult) -> None:
     fp.user_agent = result.user_agent or fp.user_agent
     fp.resolution = result.resolution or fp.resolution
     fp.dpr = result.dpr or fp.dpr
-    fp.platform = result.platform_label or fp.platform
+    # platform 是「Windows 11」「Pixel 8 / Android 14」这种稳定的设备描述，
+    # 列表里的短标识（Win11 / C128）就是从它派生的。采集只能从 UA 推出
+    # 「Windows · Chrome 146」这种更粗的摘要，覆盖它等于用信息量更低的值
+    # 换掉更好的值，还会让短标识变成「Win· Chrome 146」。所以不动这一列，
+    # 实测到的平台信息本来就在 probe 快照里。
 
     family = result.platform_family
     if family and family in PlatformFamily.__members__:

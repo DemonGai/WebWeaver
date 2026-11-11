@@ -65,15 +65,17 @@ def test_roles_carry_expected_permission_counts(seeded_database: None) -> None:
     assert len(roles["viewer"]["permission_codes"]) == 9
     assert all(code.endswith(":read") for code in roles["viewer"]["permission_codes"])
 
-    # 每名成员正好一个角色
-    assert sum(item["user_count"] for item in body["items"]) == 3
+    # 每名成员正好一个角色（admin、admin_chen、ops_lee、viewer_lin 共 4 人）
+    assert sum(item["user_count"] for item in body["items"]) == 4
     assert roles["owner"]["is_system"] is True and roles["viewer"]["is_system"] is False
 
 
 def test_users_carry_roles(seeded_database: None) -> None:
     body = client.get("/api/rbac/users").json()
     users = {item["username"]: item for item in body["items"]}
-    assert set(users) == {"admin_chen", "ops_lee", "viewer_lin"}
+    # admin 是本地开发用的简口账号（admin / admin），其余三个是分工演示成员
+    assert set(users) == {"admin", "admin_chen", "ops_lee", "viewer_lin"}
+    assert users["admin"]["role_codes"] == ["owner"]
     assert users["admin_chen"]["role_codes"] == ["owner"]
     assert users["ops_lee"]["role_codes"] == ["operator"]
     assert users["viewer_lin"]["role_codes"] == ["viewer"]

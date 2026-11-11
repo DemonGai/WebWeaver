@@ -146,10 +146,14 @@ def test_fingerprints_list(seeded_database: None) -> None:
     # 种子是下发的唯一入口：没有种子就装配不出人格，所以每条都必须有
     assert all(t["seed"] for t in body["templates"])
 
-    # 灌完种子还没人采集过，实测值一律是「未采集」
-    assert body["probed"] == 0
-    assert body["stale"] == 0
-    assert all(t["probe_state"] == "never" for t in body["templates"])
+    # 统计条的数字必须和每条的实测状态自洽，不能各算各的。
+    # 不写死「刚灌完种子所以是 0」——开发库可能已经采集过，
+    # 那样断言就会因为环境状态而不是代码问题挂掉。
+    fresh = [t for t in body["templates"] if t["probe_state"] == "fresh"]
+    stale = [t for t in body["templates"] if t["probe_state"] == "stale"]
+    assert body["stale"] == len(stale)
+    # probed 是「读回过人格」的条数，含参数改过之后变 stale 的那些
+    assert body["probed"] == len(fresh) + len(stale)
 
     # 内核支持不代表这条指纹能下发：桌面内核伪装不成 Android，
     # 要在列表里就标出来，而不是等用户点了才 422

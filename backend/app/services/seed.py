@@ -1119,6 +1119,17 @@ ROLES = [
 
 USERS = [
     {
+        "username": "admin",
+        "email": "admin@webweaver.local",
+        "display_name": "管理员",
+        "role": "owner",
+        "workspace": "webweaver-team",
+        # 单独给个弱口令：本地开发敲 admin / admin 直接进来，不用去翻常量。
+        # 它是唯一的简口账号，正式环境必须改掉。
+        "password": "admin",
+        "note": "本地开发用的简口账号",
+    },
+    {
         "username": "admin_chen",
         "email": "admin_chen@webweaver.io",
         "display_name": "陈默",
@@ -1147,7 +1158,7 @@ USERS = [
     },
 ]
 
-# 三名演示成员共用的登录密码。用常量而不是写进每个 dict，
+# 除 admin 外的演示成员共用的登录密码。用常量而不是写进每个 dict，
 # 是为了让「演示口令是什么」只有一处定义，改的时候不会漏。
 DEMO_PASSWORD = "WebWeaver@2026"
 
@@ -1192,10 +1203,13 @@ async def _seed_rbac(session: AsyncSession) -> None:
         payload = dict(item)
         role = roles[payload.pop("role")]
         workspace = workspaces[payload.pop("workspace")]
+        # 个别账号可以自带口令（目前只有 admin 用它换掉统一演示口令），
+        # 没写就沿用 DEMO_PASSWORD
+        password = payload.pop("password", DEMO_PASSWORD)
         user = User(
             **payload,
             status=UserStatus.active,
-            password_hash=hash_password(DEMO_PASSWORD),
+            password_hash=hash_password(password),
             default_workspace_id=workspace.id,
         )
         session.add(user)

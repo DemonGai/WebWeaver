@@ -272,12 +272,17 @@ class NoVncPayload(BaseModel):
 
 # ── 指纹库 ─────────────────────────────────────────────
 class FingerprintTemplate(BaseModel):
-    """一条指纹模板；列表视图逐行比对 UA / 时区 / 分辨率 / 伪装项。"""
+    """列表里的一行。
+
+    `seed` 是下发的输入，`ua` / `resolution` / `gpu` 是采集回来的结果 —— 前者
+    我们说了算，后者只能观察。`probe_state` 把「结果还能不能信」这件事显式化：
+    改过种子却没重采，UA 就还是上一个人的，页面上必须看得出来。
+    """
 
     id: str
     name: str
     fp_id: str
-    # 用于前端挑平台图标：windows / macos / mobile
+    # 用于前端挑平台图标：windows / macos / linux / android / ios
     platform_family: str
     platform: str
     ua: str
@@ -294,13 +299,188 @@ class FingerprintTemplate(BaseModel):
     # 非空时操作列替换为修复按钮，如 "一键更新 UA"
     action: str | None = None
 
+    # ── 下发与采集 ────────────────────────────────────────────────
+    seed: int | None = None
+    # 适配的内核。指纹参数按内核变化，所以「绑定哪个内核」是这一行的核心属性
+    kernel: str | None = None
+    kernel_slug: str | None = None
+    # 该内核能不能做指纹（ungoogled-chromium / Camoufox 为 False）
+    supported: bool = False
+    unsupported_reason: str | None = None
+    # 采集结果摘要
+    gpu: str | None = None
+    canvas_hash: str | None = None
+    probed_at: str | None = None
+    # never 未采集 / fresh 与当前 seed 一致 / stale 改过参数没重采 / failed 上次失败
+    probe_state: str = "never"
+
 
 class FingerprintPayload(BaseModel):
     total: int
     kernels: int
+    # 支持指纹的内核数 / 已采集数 / 实测值过期数
+    supported_kernels: int = 0
+    probed: int = 0
+    stale: int = 0
     filters: list[FilterItem]
     templates: list[FingerprintTemplate]
     shown: int
     selected: int
     page: int
     pages: int
+
+
+class FingerprintRender(BaseModel):
+    """按内核渲染出的三种下发物料。"""
+
+    # /data/fingerprint.json 的内容
+    payload: dict[str, object] = Field(default_factory=dict)
+    env: dict[str, str] = Field(default_factory=dict)
+    args: list[str] = Field(default_factory=list)
+    # 填了但该内核不认的字段 —— 不列出来就是静默失效
+    ignored: list[str] = Field(default_factory=list)
+
+
+class KernelFingerprintCaps(BaseModel):
+    """一个内核的指纹能力，前端据此决定表单显隐与提示。
+
+    放在接口里而不是前端硬编码：参数名和取值范围只有后端一处定义，
+    改内核不用两头改，也不会出现「前端以为支持、后端其实忽略」的偏差。
+    """
+
+    # 内核行的 ID：前端新建指纹时直接拿它填 kernel_id，不用再查一遍内核列表
+    kernel_id: str
+    slug: str
+    label: str
+    supported: bool
+    # seed 合法区间（闭区间），不支持指纹时为 None
+    seed_range: list[int] | None = None
+    # 该内核认的能力名，与 `fingerprint_caps` 里的常量一致
+    features: list[str] = Field(default_factory=list)
+    note: str = ""
+    reason: str | None = None
+
+
+class FingerprintInstanceRef(BaseModel):
+    """绑定到这条指纹上的实例。"""
+
+    id: str
+    name: str
+    status: str
+
+
+class FingerprintDetailPayload(BaseModel):
+    """详情：下发参数 + 实测人格 + 当前内核下的下发物料。"""
+
+    id: str
+    name: str
+    fp_id: str
+
+    kernel: str | None = None
+    kernel_slug: str | None = None
+    supported: bool = False
+    unsupported_reason: str | None = None
+    # 该内核的指纹机制一句话说明
+    note: str | None = None
+
+    # ── 下发参数 ──
+    seed: int | None = None
+    seed_range: list[int] | None = None
+    platform_family: str
+    platform_version: str | None = None
+    brand: str | None = None
+    brand_version: str | None = None
+    hardware_concurrency: int | None = None
+    timezone: str
+    language: str
+    accept_lang: str | None = None
+    webrtc_ip: str | None = None
+    canvas_noise: bool = True
+    webgl_noise: bool = True
+    audio_noise: bool = True
+    webrtc_protected: bool = True
+
+    # ── 实测人格 ──
+    ua: str = ""
+    resolution: str = ""
+    dpr: str = ""
+    gpu: str | None = None
+    canvas_hash: str | None = None
+    languages: list[str] = Field(default_factory=list)
+    webdriver: bool | None = None
+    probed_at: str | None = None
+    probe_state: str = "never"
+    probe_error: str | None = None
+    # 实测人格里会被识破的矛盾点
+    warnings: list[str] = Field(default_factory=list)
+
+    instances: list[FingerprintInstanceRef] = Field(default_factory=list)
+    render: FingerprintRender | None = None
+
+
+# ── 指纹写操作 ─────────────────────────────────────────
+class FingerprintCreate(BaseModel):
+    """新建一条指纹。种子可以留空，先建后采也行。"""
+
+    name: str = Field(min_length=1, max_length=64)
+    kernel_id: str | None = None
+    platform_family: str = "windows"
+    seed: int | None = Field(default=None, ge=1)
+    platform_version: str | None = None
+    brand: str | None = None
+    brand_version: str | None = None
+    hardware_concurrency: int | None = Field(default=None, ge=1, le=256)
+    timezone: str = "Asia/Shanghai"
+    language: str = "zh-CN"
+    accept_lang: str | None = None
+    webrtc_ip: str | None = None
+    canvas_noise: bool = True
+    webgl_noise: bool = True
+    audio_noise: bool = True
+    webrtc_protected: bool = True
+    # 留空按平台族 + 种族自动生成
+    code: str | None = None
+
+
+class FingerprintUpdate(BaseModel):
+    """改一条指纹。只传要改的字段；种子一改，实测值立刻作废。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    kernel_id: str | None = None
+    platform_family: str | None = None
+    seed: int | None = Field(default=None, ge=1)
+    platform_version: str | None = None
+    brand: str | None = None
+    brand_version: str | None = None
+    hardware_concurrency: int | None = Field(default=None, ge=1, le=256)
+    timezone: str | None = None
+    language: str | None = None
+    accept_lang: str | None = None
+    webrtc_ip: str | None = None
+    canvas_noise: bool | None = None
+    webgl_noise: bool | None = None
+    audio_noise: bool | None = None
+    webrtc_protected: bool | None = None
+
+
+class FingerprintApplyRequest(BaseModel):
+    """把指纹写进这些实例的容器并重启。"""
+
+    instance_ids: list[str] = Field(default_factory=list, min_length=1)
+
+
+class FingerprintApplyItem(BaseModel):
+    instance_id: str
+    instance_name: str
+    container: str
+    ok: bool
+    message: str
+    restarted: bool = False
+    ignored: list[str] = Field(default_factory=list)
+
+
+class FingerprintApplyResult(BaseModel):
+    ok: bool
+    succeeded: int
+    failed: int
+    items: list[FingerprintApplyItem]

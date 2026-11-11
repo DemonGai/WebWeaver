@@ -137,15 +137,26 @@ def test_fingerprints_list(seeded_database: None) -> None:
     body = client.get("/api/fingerprints").json()
     assert body["total"] == body["shown"] == len(body["templates"]) == 8
     assert body["kernels"] == 4
+    # 四个内核对指纹的支持情况：CloakBrowser 与 fingerprint-chromium 认参数，
+    # Camoufox 没做镜像，ungoogled 是纯净 Chromium 不带补丁。
+    assert body["supported_kernels"] == 2
     assert [f["key"] for f in body["filters"]] == ["all", "windows", "macos", "mobile"]
     assert [f["count"] for f in body["filters"]] == [8, 5, 2, 1]
 
-    broken = next(t for t in body["templates"] if t["warning"])
-    assert broken["uniqueness"] is None
-    assert broken["action"] == "一键更新 UA"
+    # 种子是下发的唯一入口：没有种子就装配不出人格，所以每条都必须有
+    assert all(t["seed"] for t in body["templates"])
 
-    healthy = [t for t in body["templates"] if t["uniqueness"] is not None]
-    assert all(t["uniqueness"] > 0 for t in healthy)
+    # 灌完种子还没人采集过，实测值一律是「未采集」
+    assert body["probed"] == 0
+    assert body["stale"] == 0
+    assert all(t["probe_state"] == "never" for t in body["templates"])
+
+    # 内核支持不代表这条指纹能下发：桌面内核伪装不成 Android，
+    # 要在列表里就标出来，而不是等用户点了才 422
+    android = next(t for t in body["templates"] if t["fp_id"] == "fp-android-c128")
+    assert android["supported"] is False
+    assert "Android" in (android["unsupported_reason"] or "")
+
     # 8 个实例里 7 个套模板，brw-au-syd-011 走默认指纹（原生指纹），不占模板
     assert sum(t["instances"] for t in body["templates"]) == 7
 

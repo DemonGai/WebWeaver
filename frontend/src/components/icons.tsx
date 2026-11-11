@@ -181,10 +181,12 @@ export const IconLink = make(
   </>,
 )
 
+// 「复制到剪贴板」用双矩形而不是「板 + 夹子」：夹子那根线在 11~12px 下
+// 会糊成一个空心小方框，远看像在按钮前面多印了个「0」。
 export const IconClipboard = make(
   <>
-    <rect x="6" y="4.5" width="12" height="15.5" rx="2" />
-    <path d="M9.5 4.5V3.8a1.3 1.3 0 0 1 1.3-1.3h2.4a1.3 1.3 0 0 1 1.3 1.3v.7" />
+    <rect x="9" y="9" width="11" height="11" rx="2.4" />
+    <path d="M5 15.2V5.6A1.6 1.6 0 0 1 6.6 4h9.6" />
   </>,
 )
 

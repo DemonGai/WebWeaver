@@ -49,8 +49,6 @@ from app.schemas.domain import (
     ClusterEvent,
     ClusterInfo,
     FilterItem,
-    FingerprintPayload,
-    FingerprintTemplate,
     HealthPart,
     InstanceStatus,
     InstanceSummary,
@@ -299,19 +297,6 @@ def _region_label(ip: Ip | None, mode: IpBindingMode = IpBindingMode.proxy) -> s
     if ip is None:
         return "本机网络" if mode is IpBindingMode.direct else "未分配"
     return " · ".join(part for part in (ip.country_code, ip.city) if part)
-
-
-def _disguises(fingerprint: Fingerprint) -> list[str]:
-    items = []
-    if fingerprint.canvas_noise:
-        items.append("Canvas")
-    if fingerprint.webgl_noise:
-        items.append("WebGL")
-    if fingerprint.audio_noise:
-        items.append("Audio")
-    if fingerprint.webrtc_protected:
-        items.append("WebRTC")
-    return items
 
 
 def _status_note(browser: Browser, ip: Ip | None) -> str | None:
@@ -836,60 +821,6 @@ def ip_pool(snapshot: Snapshot) -> IpPoolPayload:
             FilterItem(key="datacenter", label="机房", count=by_kind[IpKind.datacenter]),
             FilterItem(key="mobile", label="移动", count=by_kind[IpKind.mobile]),
         ],
-    )
-
-
-# ── 指纹库 ─────────────────────────────────────────────────
-
-
-def _fingerprint_action(fingerprint: Fingerprint) -> str | None:
-    if fingerprint.status is not FingerprintStatus.needs_upgrade:
-        return None
-    return "一键更新 UA"
-
-
-def fingerprints(snapshot: Snapshot) -> FingerprintPayload:
-    rows = sorted(snapshot.fingerprints.values(), key=lambda fp: (-(fp.uniqueness or 0), fp.code))
-    family_count = {family: 0 for family in PlatformFamily}
-    for fingerprint in rows:
-        family_count[fingerprint.platform_family] += 1
-    mobile = family_count[PlatformFamily.android] + family_count[PlatformFamily.ios]
-
-    templates = [
-        FingerprintTemplate(
-            id=str(fp.id),
-            name=fp.name,
-            fp_id=fp.code,
-            platform_family=fp.platform_family.value,
-            platform=fp.platform,
-            ua=_ua_label(fp.user_agent),
-            timezone=fp.timezone,
-            language=fp.language,
-            resolution=fp.resolution,
-            dpr=f"DPR {fp.dpr}",
-            disguises=_disguises(fp),
-            uniqueness=fp.uniqueness,
-            warning=fp.warning,
-            instances=len(snapshot.browsers_by_fingerprint.get(fp.id, [])),
-            action=_fingerprint_action(fp),
-        )
-        for fp in rows
-    ]
-
-    return FingerprintPayload(
-        total=len(rows),
-        kernels=len(snapshot.kernels),
-        filters=[
-            FilterItem(key="all", label="全部", count=len(rows)),
-            FilterItem(key="windows", label="Windows", count=family_count[PlatformFamily.windows]),
-            FilterItem(key="macos", label="macOS", count=family_count[PlatformFamily.macos]),
-            FilterItem(key="mobile", label="移动", count=mobile),
-        ],
-        templates=templates,
-        shown=len(templates),
-        selected=0,
-        page=1,
-        pages=1,
     )
 
 

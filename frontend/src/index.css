@@ -75,6 +75,21 @@ body {
     height: 34px;
   }
 
+  /* 禁用态必须看得出来：按钮不可点却保持满色，用户只会反复点然后以为坏了。
+     主按钮和次按钮共用一条，避免每处单独处理。 */
+  .btn-dark:disabled,
+  .btn-ghost:disabled {
+    @apply cursor-not-allowed opacity-40;
+  }
+
+  .btn-dark:disabled:hover {
+    @apply bg-[#18181b];
+  }
+
+  .btn-ghost:disabled:hover {
+    @apply bg-white;
+  }
+
   .icon-btn {
     @apply inline-flex size-8 items-center justify-center rounded-full border border-[var(--line)] bg-white text-[var(--ink-500)] transition-colors hover:bg-[#f7f7f8];
   }

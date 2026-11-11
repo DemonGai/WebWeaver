@@ -255,17 +255,153 @@ export interface FingerprintTemplate {
   instances: number
   /** 非空时操作列显示修复按钮 */
   action: string | null
+
+  /* ── 下发与采集 ── */
+  /** 决定整套人格的输入；别的字段都是它算出来的结果 */
+  seed: number | null
+  kernel: string | null
+  kernel_slug: string | null
+  /** 该内核能不能做指纹（ungoogled-chromium / Camoufox 为 false） */
+  supported: boolean
+  unsupported_reason: string | null
+  /* 以下三项是采集回来的实测值，没采过就是空 */
+  gpu: string | null
+  canvas_hash: string | null
+  probed_at: string | null
+  probe_state: ProbeState
 }
+
+/** 实测值还能不能信：从没采过 / 与当前参数一致 / 参数改过没重采 / 上次失败 */
+export type ProbeState = 'never' | 'fresh' | 'stale' | 'failed'
 
 export interface FingerprintPayload {
   total: number
   kernels: number
+  supported_kernels: number
+  probed: number
+  stale: number
   filters: { key: string; label: string; count: number }[]
   templates: FingerprintTemplate[]
   shown: number
   selected: number
   page: number
   pages: number
+}
+
+/** 按内核渲染出的下发物料：三种写法等价，用哪种看场景 */
+export interface FingerprintRender {
+  /** 写进容器 /data/fingerprint.json 的内容 */
+  payload: Record<string, unknown>
+  /** 等价的环境变量 */
+  env: Record<string, string>
+  /** 等价的 chrome 参数 */
+  args: string[]
+  /** 填了但该内核不认的字段 —— 不列出来就是静默失效 */
+  ignored: string[]
+}
+
+export interface FingerprintInstanceRef {
+  id: string
+  name: string
+  status: string
+}
+
+/** 一个内核认哪些指纹参数。前端据此决定表单里哪些字段能用。 */
+export interface KernelFingerprintCaps {
+  /** 内核行 ID，新建指纹时直接用它填 kernel_id */
+  kernel_id: string
+  slug: string
+  label: string
+  supported: boolean
+  seed_range: [number, number] | null
+  /** 与后端 fingerprint_caps 的能力名一致：seed / timezone / webrtc_ip ... */
+  features: string[]
+  note: string
+  reason: string | null
+}
+
+export interface FingerprintDetail {
+  id: string
+  name: string
+  fp_id: string
+
+  kernel: string | null
+  kernel_slug: string | null
+  supported: boolean
+  unsupported_reason: string | null
+  /** 该内核指纹机制的一句话说明 */
+  note: string | null
+
+  /* 下发参数 */
+  seed: number | null
+  seed_range: [number, number] | null
+  platform_family: PlatformFamily
+  platform_version: string | null
+  brand: string | null
+  brand_version: string | null
+  hardware_concurrency: number | null
+  timezone: string
+  language: string
+  accept_lang: string | null
+  webrtc_ip: string | null
+  canvas_noise: boolean
+  webgl_noise: boolean
+  audio_noise: boolean
+  webrtc_protected: boolean
+
+  /* 实测人格 */
+  ua: string
+  resolution: string
+  dpr: string
+  gpu: string | null
+  canvas_hash: string | null
+  languages: string[]
+  webdriver: boolean | null
+  probed_at: string | null
+  probe_state: ProbeState
+  probe_error: string | null
+  warnings: string[]
+
+  instances: FingerprintInstanceRef[]
+  render: FingerprintRender | null
+}
+
+/** 新建 / 编辑共用：只传要改的字段 */
+export interface FingerprintFormValues {
+  name?: string
+  kernel_id?: string | null
+  platform_family?: PlatformFamily
+  seed?: number | null
+  platform_version?: string | null
+  brand?: string | null
+  brand_version?: string | null
+  hardware_concurrency?: number | null
+  timezone?: string
+  language?: string
+  accept_lang?: string | null
+  webrtc_ip?: string | null
+  canvas_noise?: boolean
+  webgl_noise?: boolean
+  audio_noise?: boolean
+  webrtc_protected?: boolean
+  code?: string | null
+}
+
+export interface FingerprintApplyItem {
+  instance_id: string
+  instance_name: string
+  container: string
+  ok: boolean
+  message: string
+  restarted: boolean
+  ignored: string[]
+}
+
+export interface FingerprintApplyResult {
+  ok: boolean
+  succeeded: number
+  failed: number
+  items: FingerprintApplyItem[]
 }
 
 /* ── 账号安全 ─────────────────────────────────────────── */

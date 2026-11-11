@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.config import BACKEND_ROOT, settings
@@ -74,7 +74,7 @@ def pretty_time(value: str | None) -> str | None:
     except ValueError:
         return value[:16].replace("T", " ") or None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
@@ -101,7 +101,9 @@ def _version_of(image: ImageInfo, tag_version: str | None) -> str:
     return image.version or tag_version or "latest"
 
 
-def scan_versions(engine_name: str, *, images: list[ImageInfo] | None = None) -> list[KernelVersion]:
+def scan_versions(
+    engine_name: str, *, images: list[ImageInfo] | None = None
+) -> list[KernelVersion]:
     """某个内核在本地镜像仓库里的全部版本，按版本号从新到旧。
 
     ``images`` 可传入已拉好的镜像清单，避免一页四个内核把 ``docker image ls``

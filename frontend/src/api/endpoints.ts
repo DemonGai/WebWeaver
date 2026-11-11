@@ -12,7 +12,12 @@ import type {
   BrowserMutationResult,
   BrowserOptions,
   Captcha,
+  FingerprintApplyResult,
+  FingerprintDetail,
+  FingerprintFormValues,
+  FingerprintInstanceRef,
   FingerprintPayload,
+  KernelFingerprintCaps,
   InstallJob,
   IpPoolPayload,
   KernelDetailPayload,
@@ -78,6 +83,27 @@ export const endpoints = {
   installKernel: (slug: string, body: { tag?: string; version?: string } = {}) =>
     api.post<InstallJob>(`/kernels/${slug}/install`, body),
   installJobs: () => api.get<InstallJob[]>('/kernels/jobs'),
+
+  /* 指纹池写操作 */
+  fingerprintCapabilities: () =>
+    api.get<KernelFingerprintCaps[]>('/fingerprints/capabilities'),
+  fingerprintOptions: () =>
+    api.get<FingerprintInstanceRef[]>('/fingerprints/options'),
+  fingerprintDetail: (id: string) =>
+    api.get<FingerprintDetail>(`/fingerprints/${id}`),
+  createFingerprint: (body: FingerprintFormValues & { name: string }) =>
+    api.post<FingerprintDetail>('/fingerprints', body),
+  updateFingerprint: (id: string, body: FingerprintFormValues) =>
+    api.patch<FingerprintDetail>(`/fingerprints/${id}`, body),
+  deleteFingerprint: (id: string) => api.delete<void>(`/fingerprints/${id}`),
+  // 起一个临时容器按当前参数装配一次人格，把 UA / GPU 这些读回来
+  probeFingerprint: (id: string) =>
+    api.post<FingerprintDetail>(`/fingerprints/${id}/probe`, {}),
+  // 写进实例容器的 /data/fingerprint.json 并重启容器
+  applyFingerprint: (id: string, instanceIds: string[]) =>
+    api.post<FingerprintApplyResult>(`/fingerprints/${id}/apply`, {
+      instance_ids: instanceIds,
+    }),
   installJob: (id: string) => api.get<InstallJob>(`/kernels/jobs/${id}`),
 
   /* 头像菜单 + 个人中心（当前登录成员，非浏览器账号池） */

@@ -69,7 +69,12 @@ ENGINE_SPECS: dict[str, dict[str, object]] = {
     },
 }
 
-DEFAULT_SPEC: dict[str, object] = {"tone": "sky", "tagline": "Chromium 定制内核", "cdp": None, "novnc": None}
+DEFAULT_SPEC: dict[str, object] = {
+    "tone": "sky",
+    "tagline": "Chromium 定制内核",
+    "cdp": None,
+    "novnc": None,
+}
 
 # 还没做成镜像的内核：页面上灰掉，只显示「暂未支持」
 UNSUPPORTED: dict[str, str] = {
@@ -124,9 +129,8 @@ async def _load_images() -> tuple[list[kernel_image.ImageInfo], bool, str | None
 
 async def payload(session: AsyncSession) -> KernelPayload:
     """读台账 + 扫本地镜像，组装页面数据。"""
-    kernels = list(
-        (await session.scalars(select(Kernel).order_by(Kernel.is_primary.desc(), Kernel.name))).all()
-    )
+    statement = select(Kernel).order_by(Kernel.is_primary.desc(), Kernel.name)
+    kernels = list((await session.scalars(statement)).all())
     browsers = await _browsers_of(session, [k.id for k in kernels])
     images, docker_ok, docker_error = await _load_images()
     scanned_at = _now()
@@ -322,7 +326,9 @@ async def _get_kernel(session: AsyncSession, kernel_id: str) -> Kernel:
     return kernel
 
 
-def _require_installed(kernel: Kernel, version: str, versions: list[KernelVersion]) -> KernelVersion:
+def _require_installed(
+    kernel: Kernel, version: str, versions: list[KernelVersion]
+) -> KernelVersion:
     for item in versions:
         if item.version == version:
             return item
@@ -360,7 +366,8 @@ async def switch_version(
     before = kernel.version
     if before != version:
         kernel.version = version
-        if kernel.latest_version is None or version_key(version) > version_key(kernel.latest_version):
+        latest = kernel.latest_version
+        if latest is None or version_key(version) > version_key(latest):
             kernel.latest_version = version
         await audit.record(
             session,

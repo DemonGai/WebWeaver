@@ -37,7 +37,6 @@ from app.models import (
     BrowserStatus,
     Fingerprint,
     FingerprintMode,
-    FingerprintStatus,
     Group,
     GroupKind,
     Ip,
@@ -198,6 +197,7 @@ FINGERPRINTS = [
     {
         "code": "fp-win11-c128",
         "name": "Win11 · Chrome 128 · 美国",
+        "seed": 24760,
         "platform_family": PlatformFamily.windows,
         "platform": "Windows 11",
         "user_agent": (
@@ -214,6 +214,7 @@ FINGERPRINTS = [
     {
         "code": "fp-macos-c128",
         "name": "macOS · Chrome 128 · 日本",
+        "seed": 70379,
         "platform_family": PlatformFamily.macos,
         "platform": "macOS 14",
         "user_agent": (
@@ -230,6 +231,7 @@ FINGERPRINTS = [
     {
         "code": "fp-android-c128",
         "name": "Android 14 · Chrome 128 · 新加坡",
+        "seed": 75658,
         "platform_family": PlatformFamily.android,
         "platform": "Pixel 8 / Android 14",
         "user_agent": (
@@ -246,6 +248,7 @@ FINGERPRINTS = [
     {
         "code": "fp-win10-c126",
         "name": "Win10 · Chrome 126 · 德国",
+        "seed": 10452,
         "platform_family": PlatformFamily.windows,
         "platform": "Windows 10",
         "user_agent": (
@@ -256,15 +259,15 @@ FINGERPRINTS = [
         "language": "de-DE",
         "resolution": "1920x1080",
         "dpr": "1",
+        # 关掉 Canvas 噪声：fingerprint-chromium 会把它翻译成
+        # --disable-spoofing=canvas。这条正好演示「单开一项会更好还是更差」
         "canvas_noise": False,
-        "uniqueness": None,
-        "warning": "需升级 Canvas 插件",
-        "status": FingerprintStatus.needs_upgrade,
         "kernel": "fingerprint-chromium",
     },
     {
         "code": "fp-win11-c128uk",
         "name": "Win11 · Chrome 128 · 英国",
+        "seed": 83373,
         "platform_family": PlatformFamily.windows,
         "platform": "Windows 11",
         "user_agent": (
@@ -281,6 +284,7 @@ FINGERPRINTS = [
     {
         "code": "fp-macos-safari",
         "name": "macOS · Safari 17 · 香港",
+        "seed": 37572,
         "platform_family": PlatformFamily.macos,
         "platform": "macOS 14",
         "user_agent": (
@@ -297,6 +301,7 @@ FINGERPRINTS = [
     {
         "code": "fp-win11-c128ca",
         "name": "Win11 · Chrome 127 · 加拿大",
+        "seed": 53732,
         "platform_family": PlatformFamily.windows,
         "platform": "Windows 11",
         "user_agent": (
@@ -313,6 +318,7 @@ FINGERPRINTS = [
     {
         "code": "fp-win11-c128au",
         "name": "Win11 · Chrome 128 · 澳洲",
+        "seed": 35475,
         "platform_family": PlatformFamily.windows,
         "platform": "Windows 11",
         "user_agent": (

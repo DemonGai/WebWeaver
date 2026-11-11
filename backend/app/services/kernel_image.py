@@ -223,7 +223,8 @@ def _parse_layer_line(line: str) -> tuple[str, str] | None:
     layer, sep, status = line.partition(": ")
     if not sep or not layer or " " in layer:
         return None
-    if not (status.startswith("Pull") or status.startswith("Download") or status.startswith("Wait")):
+    # 只认"层在下载/解压/等待"这几种状态，其余（Already exists 之外的杂项）忽略
+    if not status.startswith(("Pull", "Download", "Wait")):
         return None
     if layer.lower().startswith(("digest", "status", "latest", "main")):
         return None

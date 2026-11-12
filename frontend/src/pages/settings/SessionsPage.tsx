@@ -1,28 +1,35 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { authToken } from '@/api/client'
 import { endpoints } from '@/api/endpoints'
+import { useAuth } from '@/auth/AuthProvider'
 import { useApi } from '@/hooks/useApi'
 import { PageHeader, PageShell } from '@/components/Layout'
 import { Card, SectionHeader } from '@/components/ui'
-import { IconDevices, IconMonitor, IconPower, IconRefresh } from '@/components/icons'
+import { IconDevices, IconMonitor, IconPower, IconRefresh, IconShield } from '@/components/icons'
 import { formatDateTime, formatRelative } from '@/lib/format'
 import { ErrorState, Loading } from '@/pages/OverviewPage'
 import type { SessionItem } from '@/types/domain'
 
 const REASON_LABEL: Record<string, string> = {
   logout: '主动退出',
-  password_reset: '修改密码后失效',
+  logout_all: '由其他设备统一下线',
+  password_change: '修改密码后失效',
+  password_reset: '重置密码后失效',
+  reuse_detected: '令牌疑似被盗用',
+  account_disabled: '账号被停用',
+  migration: '系统升级后失效',
   admin: '被踢下线',
 }
 
 export default function SessionsPage() {
   const navigate = useNavigate()
+  const { signOut } = useAuth()
   const { data, status, error, reload } = useApi(endpoints.sessions, [])
   const [items, setItems] = useState<SessionItem[]>([])
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [revokingOthers, setRevokingOthers] = useState(false)
 
   useEffect(() => {
     if (data) setItems(data.items)
@@ -42,6 +49,7 @@ export default function SessionsPage() {
     )
 
   const active = items.filter((item) => !item.revoked)
+  const others = active.filter((item) => !item.current)
 
   const revoke = async (item: SessionItem) => {
     // 两段式确认：第一次点击只是「待确认」，避免误触把自己踢下线
@@ -57,9 +65,9 @@ export default function SessionsPage() {
       const res = await endpoints.revokeSession(item.id)
       setNotice(res.message)
       if (res.signed_out) {
-        // 踢的是自己这台：令牌已经失效，清掉本地并回登录页
-        authToken.clear()
-        navigate('/login')
+        // 踢的是自己这台：Cookie 里的令牌已经作废，本地状态也一起清
+        await signOut()
+        navigate('/login', { replace: true })
         return
       }
       reload()
@@ -70,16 +78,45 @@ export default function SessionsPage() {
     }
   }
 
+  const revokeOthers = async () => {
+    if (revokingOthers) return
+    setRevokingOthers(true)
+    setNotice(null)
+    try {
+      const res = await endpoints.logoutAll(true)
+      setNotice(res.message)
+      reload()
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : '操作失败')
+    } finally {
+      setRevokingOthers(false)
+    }
+  }
+
   return (
     <PageShell>
       <PageHeader
         title="登录设备管理"
         subtitle={`当前 ${active.length} 台设备在线；陌生设备可以立即下线`}
         actions={
-          <button type="button" onClick={reload} className="btn-ghost !h-8 !text-[12px]">
-            <IconRefresh size={13} />
-            刷新
-          </button>
+          <>
+            {others.length > 0 && (
+              <button
+                type="button"
+                onClick={revokeOthers}
+                disabled={revokingOthers}
+                className="btn-ghost !h-8 !text-[12px]"
+                title="保留当前设备，把其他设备的登录全部作废"
+              >
+                <IconShield size={13} />
+                {revokingOthers ? '处理中…' : `下线其他 ${others.length} 台`}
+              </button>
+            )}
+            <button type="button" onClick={reload} className="btn-ghost !h-8 !text-[12px]">
+              <IconRefresh size={13} />
+              刷新
+            </button>
+          </>
         }
       />
 

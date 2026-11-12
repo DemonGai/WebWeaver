@@ -48,7 +48,9 @@ const STRENGTH: Record<number, { label: string; bar: string; text: string }> = {
 
 export default function ResetPasswordPage() {
   const [params] = useSearchParams()
-  const email = params.get('email') ?? 'lin.zhiyuan@webweaver.io'
+  // 邮件里的链接会带上 ?email=...；没有就留空，别拿一个假账号顶上——
+  // 那会让用户以为自己正在改别人的密码
+  const email = params.get('email') ?? ''
   // 令牌是重置的唯一凭据：没有它服务端会直接拒绝，前端先把话说清楚
   const token = params.get('token') ?? ''
 
@@ -69,11 +71,6 @@ export default function ResetPasswordPage() {
     e.preventDefault()
     if (submitting) return
     setError(null)
-
-    if (!token) {
-      setError('重置链接缺少令牌，请返回找回密码重新发送邮件')
-      return
-    }
 
     setSubmitting(true)
     try {
@@ -111,15 +108,48 @@ export default function ResetPasswordPage() {
     )
   }
 
+  // 没有令牌（链接被截断、复制漏了一段）就别摆出一个能填的表单，
+  // 直接说清楚并给一条重发的路
+  if (!token) {
+    return (
+      <AuthShell>
+        <div className="flex flex-col items-center text-center">
+          <div className="flex size-16 items-center justify-center rounded-full bg-rose-50 text-rose-500">
+            <IconAlert size={26} />
+          </div>
+          <h1 className="mt-5 text-[21px] font-semibold tracking-tight">链接无效或已过期</h1>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--ink-500)]">
+            重置链接只能使用一次，有效期 30 分钟
+            <br />
+            请重新申请一封重置邮件
+          </p>
+          <Link to="/forgot-password" className="btn-dark mt-6 !h-11 w-full !text-[13px]">
+            重新发送重置邮件
+          </Link>
+          <Link
+            to="/login"
+            className="mt-3 text-[11.5px] font-medium text-blue-600 hover:underline"
+          >
+            返回登录
+          </Link>
+        </div>
+      </AuthShell>
+    )
+  }
+
   return (
     <AuthShell>
       <AuthTitle
         title="设置新密码"
         subtitle={
-          <>
-            为账号 <span className="font-medium text-[var(--ink-700)]">{email}</span>{' '}
-            设置一个新的登录密码
-          </>
+          email ? (
+            <>
+              为账号 <span className="font-medium text-[var(--ink-700)]">{email}</span>{' '}
+              设置一个新的登录密码
+            </>
+          ) : (
+            '设置一个新的登录密码'
+          )
         }
       />
 

@@ -6,6 +6,7 @@
 """
 
 import asyncio
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -34,6 +35,25 @@ def _post(**body):
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _login(account: str, password: str, **extra) -> dict:
+    """清掉上一个用例留下的 Cookie 再登录，避免互相影响。"""
+    client.cookies.clear()
+    return _post(action="login", account=account, password=password, **extra).json()
+
+
+def _access() -> str:
+    """测试里直接读 Cookie：模拟「浏览器自动带上」这件事。"""
+    token = client.cookies.get("wv_at")
+    assert token, "登录后应当有访问令牌 Cookie"
+    return token
+
+
+def _refresh() -> str:
+    token = client.cookies.get("wv_rt")
+    assert token, "登录后应当有刷新令牌 Cookie"
+    return token
 
 
 def _run(coro_fn) -> None:
@@ -103,13 +123,19 @@ def test_password_hash_roundtrip() -> None:
 # ── 登录 ─────────────────────────────────────────────────────
 
 
-def test_login_returns_token_and_profile(restored_demo_users: None) -> None:
-    body = _post(action="login", account="admin_chen", password=DEMO_PASSWORD).json()
+def test_login_sets_cookies_and_profile(restored_demo_users: None) -> None:
+    body = _login("admin_chen", DEMO_PASSWORD)
 
     assert body["ok"] is True
     assert body["action"] == "login"
-    assert body["token"]
-    assert body["expires_at"]
+    # 令牌只走 httpOnly Cookie，响应体里不能出现明文
+    assert "access_token" not in body and "refresh_token" not in body
+    assert "token" not in body
+    # 但要把各自的到期时间给前端，用于安排续期与倒计时
+    assert body["access_expires_at"] and body["refresh_expires_at"]
+    assert body["access_expires_at"] < body["refresh_expires_at"]
+    assert 1700 <= body["access_ttl"] <= 1800
+    assert body["remember"] is False
     assert body["user"]["username"] == "admin_chen"
     assert body["user"]["roles"] == ["owner"]
     assert body["user"]["is_superuser"] is False
@@ -117,22 +143,37 @@ def test_login_returns_token_and_profile(restored_demo_users: None) -> None:
     # 响应里不能出现密码哈希
     assert "password_hash" not in body["user"]
 
-    me = client.get("/api/auth/me", headers=_auth(body["token"]))
+    access, refresh = _access(), _refresh()
+    # 访问令牌是 JWT（三段），刷新令牌是随机串（不含点）
+    assert access.count(".") == 2 and access.startswith("eyJ")
+    assert "." not in refresh
+
+    me = client.get("/api/auth/me")
     assert me.status_code == 200
     assert me.json()["user"]["username"] == "admin_chen"
 
-    # 库里存的是摘要，不是令牌明文
+    # 库里存的是刷新令牌摘要，不是明文
     async def check() -> None:
         async with SessionLocal() as session:
             row = await session.scalar(
-                select(AuthSession).where(AuthSession.token_hash == token_digest(body["token"]))
+                select(AuthSession).where(AuthSession.refresh_hash == token_digest(refresh))
             )
             assert row is not None
-            assert row.token_hash != body["token"]
-            assert len(row.token_hash) == 64
             assert row.revoked_at is None
+            assert row.absolute_expires_at > row.expires_at - timedelta(days=1)
 
     _run(check)
+
+
+def test_bearer_header_still_works(restored_demo_users: None) -> None:
+    """脚本和 CI 不带 Cookie，Authorization 头必须照样能用。"""
+    _login("ops_lee", DEMO_PASSWORD)
+    token = _access()
+
+    client.cookies.clear()
+    me = client.get("/api/auth/me", headers=_auth(token))
+    assert me.status_code == 200
+    assert me.json()["user"]["username"] == "ops_lee"
 
 
 def test_login_email_is_accepted_case_insensitively(restored_demo_users: None) -> None:
@@ -169,15 +210,22 @@ def test_login_locks_after_threshold(restored_demo_users: None) -> None:
     assert "分钟后再试" in blocked["message"]
 
 
-def test_logout_revokes_current_token(restored_demo_users: None) -> None:
-    token = _post(action="login", account="viewer_lin", password=DEMO_PASSWORD).json()["token"]
+def test_logout_revokes_current_session(restored_demo_users: None) -> None:
+    _login("viewer_lin", DEMO_PASSWORD)
+    access = _access()
 
-    out = client.post("/api/auth", json={"action": "logout"}, headers=_auth(token)).json()
+    out = client.post("/api/auth", json={"action": "logout"}).json()
     assert out["ok"] is True
-    assert client.get("/api/auth/me", headers=_auth(token)).status_code == 401
+    # 注销后本地 Cookie 必须被清掉
+    assert client.cookies.get("wv_at") is None
+
+    # 关键：访问令牌本身还没到期，但会话已吊销，用它访问必须 401。
+    # 这正是「踢人立刻生效」的实现方式——JWT 里带 sid，服务端回表看会话死活。
+    client.cookies.clear()
+    assert client.get("/api/auth/me", headers=_auth(access)).status_code == 401
 
     # 再注销一次仍然是成功：注销是幂等的
-    again = client.post("/api/auth", json={"action": "logout"}, headers=_auth(token)).json()
+    again = client.post("/api/auth", json={"action": "logout"}).json()
     assert again["ok"] is True
 
 
@@ -185,6 +233,7 @@ def test_logout_revokes_current_token(restored_demo_users: None) -> None:
 
 
 def test_register_creates_viewer(restored_demo_users: None) -> None:
+    client.cookies.clear()
     username = f"tmp_{uuid4().hex[:8]}"
     body = _post(
         action="register",
@@ -196,12 +245,13 @@ def test_register_creates_viewer(restored_demo_users: None) -> None:
 
     try:
         assert body["ok"] is True, body["message"]
-        assert body["token"]
+        # 注册即登录：Cookie 已种下，但响应体里不带令牌明文
+        assert body["access_expires_at"] and _access()
         assert body["user"]["roles"] == ["viewer"]
         assert "browser:read" in body["user"]["permissions"]
         assert "browser:delete" not in body["user"]["permissions"]
 
-        me = client.get("/api/auth/me", headers=_auth(body["token"])).json()
+        me = client.get("/api/auth/me").json()
         assert me["user"]["display_name"] == "临时成员"
 
         duplicate = _post(
@@ -260,8 +310,9 @@ def test_reset_password_flow(restored_demo_users: None) -> None:
         pytest.skip("AUTH_EXPOSE_RESET_TOKEN 未开启，无法在不发邮件的情况下走通重置")
 
     # 先登录一次，重置后要能统计出被踢下线的会话
-    login = _post(action="login", account="viewer_lin", password=DEMO_PASSWORD).json()
+    login = _login("viewer_lin", DEMO_PASSWORD)
     assert login["ok"] is True
+    stale_access = _access()
 
     code = client.get("/api/auth/captcha").json()["code"]
     asked = _post(action="forgot_password", email="viewer_lin@webweaver.io", captcha=code).json()
@@ -305,8 +356,10 @@ def test_reset_password_flow(restored_demo_users: None) -> None:
     new_password = _post(action="login", account="viewer_lin", password=STRONG_PASSWORD).json()
     assert new_password["ok"] is True
 
-    # 会话令牌全部被吊销：重置前签发的那个已经不能用了
-    assert client.get("/api/auth/me", headers=_auth(login["token"])).status_code == 401
+    # 会话全部被吊销：重置前拿到的访问令牌还没到期，也必须 401。
+    # 先清 Cookie，否则 Cookie 里的新令牌会盖过这个旧 header（Cookie 优先）。
+    client.cookies.clear()
+    assert client.get("/api/auth/me", headers=_auth(stale_access)).status_code == 401
 
 
 def test_reset_password_rejects_unknown_token() -> None:

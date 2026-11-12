@@ -105,13 +105,31 @@ class ResetPasswordRequest(BaseModel):
     email: str | None = Field(default=None, max_length=255)
 
 
+class ChangePasswordRequest(BaseModel):
+    """已登录改密码：必须给出原密码。"""
+
+    action: Literal["change_password"]
+    current_password: str = Field(min_length=1, max_length=128, description="当前密码")
+    password: str = Field(min_length=1, max_length=128, description="新密码")
+    confirm: str = Field(min_length=1, max_length=128)
+
+
+class LogoutAllRequest(BaseModel):
+    """下线所有其他设备；当前这台是否保留由 `keep_current` 决定。"""
+
+    action: Literal["logout_all"]
+    keep_current: bool = Field(default=True, description="是否保留当前设备的登录")
+
+
 AuthAction = Annotated[
     LoginRequest
     | RegisterRequest
     | LogoutRequest
     | ForgotPasswordRequest
     | ResendResetRequest
-    | ResetPasswordRequest,
+    | ResetPasswordRequest
+    | ChangePasswordRequest
+    | LogoutAllRequest,
     Field(discriminator="action"),
 ]
 
@@ -122,19 +140,43 @@ AuthAction = Annotated[
 class AuthResponse(BaseModel):
     """单入口的响应信封：``ok`` + ``message`` 是所有动作都有的两件事。
 
-    其余字段按动作可选出现——登录/注册带 ``token`` 与 ``user``，
+    其余字段按动作可选出现——登录/注册带 ``user`` 与各到期时间，
     找回密码带 ``email``/``cooldown``，重置换密码带 ``checks``/``strength``/
     ``revoked_sessions``。前端只读自己关心的那几个即可。
+
+    **令牌明文始终不出现在 HTTP 响应体里**（路由层的 ``response_model_exclude``
+    会把它们剔掉），只通过 httpOnly Cookie 下发。字段留在这里是为了在
+    「服务层 → 路由层」之间传值：路由层拿到后写 Cookie，然后丢弃。
     """
 
     ok: bool
     action: str
     message: str
 
-    # 登录 / 注册 / me
+    # 登录状态检测：登录相关动作为 None，`/auth/session` 明确给出是/否
+    authenticated: bool | None = None
+
+    # 登录 / 注册 / me / session
     user: AuthUser | None = None
-    token: str | None = None
-    expires_at: datetime | None = None
+
+    # 令牌（仅内部传递，响应体里会被排除）
+    access_token: str | None = Field(default=None, exclude=True)
+    refresh_token: str | None = Field(default=None, exclude=True)
+
+    # 令牌时长：前端据此安排静默续期与倒计时
+    access_expires_at: datetime | None = None
+    refresh_expires_at: datetime | None = None
+    absolute_expires_at: datetime | None = None
+    access_ttl: int | None = None
+    refresh_ttl: int | None = None
+    absolute_ttl: int | None = None
+    remember: bool | None = None
+
+    # 会话状态
+    session_id: str | None = None
+    signed_in_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    other_sessions: int | None = None
 
     # 找回密码
     email: str | None = None
@@ -143,7 +185,7 @@ class AuthResponse(BaseModel):
     # 仅当 AUTH_EXPOSE_RESET_TOKEN=true（本地联调）时返回，方便不走邮件点通流程
     reset_token: str | None = None
 
-    # 重置密码
+    # 重置 / 修改密码
     checks: list[PasswordRule] | None = None
     strength: int | None = None
     revoked_sessions: int | None = None

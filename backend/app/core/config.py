@@ -38,9 +38,20 @@ class Settings(BaseSettings):
     db_pool_disabled: bool = False
 
     # ── 认证 ──────────────────────────────────────────────────────────
-    # 会话令牌有效期；勾选「记住我」用较长的那一档
-    auth_session_ttl_minutes: int = 720
-    auth_session_ttl_remember_minutes: int = 60 * 24 * 30
+    # 双令牌：短令牌进 Authorization/Cookie 直接鉴权，长令牌只用来换短令牌。
+    # 短令牌 30 分钟，到期由前端静默续期；长令牌 7 天，勾「记住我」延长到 30 天。
+    auth_access_ttl_minutes: int = 30
+    auth_refresh_ttl_minutes: int = 60 * 24 * 7
+    auth_refresh_ttl_remember_minutes: int = 60 * 24 * 30
+    # 会话绝对上限：无论怎么续期，超过这个时长必须重新登录。
+    # 否则一个被偷走的刷新令牌可以靠不断续期永久有效。
+    auth_absolute_ttl_minutes: int = 60 * 24 * 30
+    # 访问令牌的签名密钥。生产必须通过环境变量覆盖，否则任何人都能伪造令牌。
+    auth_jwt_secret: str = "webweaver-dev-only-secret-please-override-in-production"
+    # Cookie 是否带 Secure：本地 http 调试必须 false，对外 https 部署必须 true
+    auth_cookie_secure: bool = False
+    auth_cookie_samesite: str = "lax"
+    auth_cookie_domain: str | None = None
     # 连续登录失败到多少次锁账号、锁多久
     auth_max_failed_logins: int = 5
     auth_lock_minutes: int = 15

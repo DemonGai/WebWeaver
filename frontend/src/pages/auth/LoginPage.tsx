@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
-import { authToken } from '@/api/client'
+import { useAuth } from '@/auth/AuthProvider'
 import { AuthShell, AuthTitle } from '@/components/AuthShell'
 import { Field, IconInput } from '@/components/fields'
 import { IconAlert, IconArrowRight, IconEye, IconEyeOff, IconLock, IconUser } from '@/components/icons'
@@ -10,11 +10,17 @@ import { IconAlert, IconArrowRight, IconEye, IconEyeOff, IconLock, IconUser } fr
  * 登录页。
  *
  * 认证后端只有一个写入口 `POST /api/auth`，这里传 `action: 'login'`。
- * 拿到令牌后写进 localStorage（见 api/client.ts），后续请求自动带 Bearer 头。
+ * 令牌由后端写进 httpOnly Cookie，页面拿不到也不需要拿——`signIn` 只需
+ * 把响应里的会话信息（用户、各到期时间）装进全局状态。
+ *
+ * 进来时如果带着 `state.from`（守卫记下的原页面），登录后直接送回去，
+ * 而不是一律跳首页。
  */
 export default function LoginPage() {
   const navigate = useNavigate()
-  const [account, setAccount] = useState('admin_chen')
+  const location = useLocation()
+  const { signIn } = useAuth()
+  const [account, setAccount] = useState('admin')
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
   const [visible, setVisible] = useState(false)
@@ -28,12 +34,13 @@ export default function LoginPage() {
     setSubmitting(true)
     try {
       const res = await endpoints.login({ account, password, remember })
-      if (!res.ok || !res.token) {
+      if (!res.ok) {
         setError(res.message)
         return
       }
-      authToken.set(res.token)
-      navigate('/')
+      signIn(res)
+      const from = (location.state as { from?: string } | null)?.from
+      navigate(from && from !== '/login' ? from : '/', { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败，请稍后重试')
     } finally {

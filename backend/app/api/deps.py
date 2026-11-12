@@ -1,10 +1,17 @@
-"""接口层公共依赖：把 ``Authorization: Bearer <token>`` 解析成当前成员。
+"""接口层公共依赖：把请求携带的访问令牌解析成当前成员。
 
 为什么要依赖而不是中间件：不是每个接口都需要登录（健康检查、验证码、
 找回密码都要匿名可访问），中间件会对所有请求都做一次数据库查询。
 用依赖则只有声明了 ``CurrentUser`` 的路由才付这个成本。
 
-解析成功后顺手把 ``user_id`` 写到 ``request.state``，方便日志与审计补链路字段。
+令牌来源有两处，**显式的 Authorization 头优先**：
+
+1. ``Authorization: Bearer`` —— 脚本、CI、curl、以及需要临时以某个身份
+   发一次请求的场景。写了就是明确意图，应当盖过浏览器自动带上的 Cookie。
+2. ``wv_at`` Cookie —— 浏览器走这条。httpOnly，脚本读不到，XSS 拿不走。
+
+同时支持两者是为了让「浏览器更安全」和「命令行更好用」不用二选一。
+反过来（Cookie 优先）会让「带 header 的请求却用了另一个身份」，非常难排查。
 """
 
 from typing import Annotated
@@ -12,6 +19,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cookies import ACCESS_COOKIE, REFRESH_COOKIE
 from app.core.db import get_session
 from app.models import AuthSession, User
 from app.services import auth_service, rbac
@@ -20,12 +28,22 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
 def bearer_token(request: Request) -> str | None:
-    """取 Bearer 令牌；没带或格式不对返回 ``None``。"""
+    """取 ``Authorization: Bearer`` 里的令牌；没带或格式不对返回 ``None``。"""
     header = request.headers.get("Authorization") or ""
     scheme, _, value = header.partition(" ")
     if scheme.lower() != "bearer":
         return None
     return value.strip() or None
+
+
+def access_token(request: Request) -> str | None:
+    """当前请求的访问令牌：显式 header 优先，其次 Cookie。"""
+    return bearer_token(request) or request.cookies.get(ACCESS_COOKIE)
+
+
+def refresh_token(request: Request) -> str | None:
+    """当前请求的刷新令牌（只在 ``/auth/refresh`` 与登出时用得上）。"""
+    return request.cookies.get(REFRESH_COOKIE)
 
 
 async def get_current_context(request: Request, session: SessionDep) -> tuple[User, AuthSession]:
@@ -35,8 +53,11 @@ async def get_current_context(request: Request, session: SessionDep) -> tuple[Us
     得知道这次请求用的是哪一行 ``auth_sessions``。解析逻辑与鉴权完全一致，
     所以让 ``get_current_user`` 也挂在这个依赖上（FastAPI 按依赖缓存，
     同一请求里只会查一次库）。
+
+    401 不分「令牌过期」和「会话已吊销」：前端拿到 401 会先尝试静默续期，
+    续期失败才跳登录页。区分原因对客户端没有用，反而多一处可能泄漏的细节。
     """
-    resolved = await auth_service.resolve_session(session, bearer_token(request))
+    resolved = await auth_service.resolve_access(session, access_token(request))
     if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -47,6 +68,7 @@ async def get_current_context(request: Request, session: SessionDep) -> tuple[Us
     user, row = resolved
     request.state.user_id = user.id
     request.state.username = user.username
+    request.state.session_id = row.id
     await auth_service.touch_session(session, row)
     return user, row
 
@@ -60,7 +82,7 @@ async def get_current_user(
 
 async def get_optional_user(request: Request, session: SessionDep) -> User | None:
     """可选登录：用于「登录后展示更多」但不强制登录的接口。"""
-    resolved = await auth_service.resolve_session(session, bearer_token(request))
+    resolved = await auth_service.resolve_access(session, access_token(request))
     if resolved is None:
         return None
     user, _ = resolved

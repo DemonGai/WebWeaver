@@ -24,11 +24,19 @@ TEST_CLIENT_HOST = "testclient"
 
 
 def _login(account: str = "admin_chen", password: str = DEMO_PASSWORD) -> str:
+    """登录并从 Cookie 里取访问令牌。
+
+    令牌不再出现在响应体里（httpOnly Cookie 才拿得到），但测试仍需要一份
+    可直接放进 Authorization 头的凭据——两者指向同一个会话，等价。
+    """
+    client.cookies.clear()
     body = client.post(
         "/api/auth", json={"action": "login", "account": account, "password": password}
     ).json()
     assert body["ok"] is True, body
-    return body["token"]
+    token = client.cookies.get("wv_at")
+    assert token, "登录后应当下发访问令牌 Cookie"
+    return token
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -77,6 +85,8 @@ def test_workspaces_follow_default_workspace(seeded_database: None) -> None:
     viewer = client.get("/api/auth/workspaces", headers=_auth(_login("viewer_lin"))).json()
     assert viewer["default_id"] == "webweaver-lab"
 
+    # 匿名 = 既没有 header 也没有 Cookie；上一步登录留下了 Cookie，先清掉
+    client.cookies.clear()
     anonymous = client.get("/api/auth/workspaces").json()
     assert anonymous["default_id"] == "webweaver-team"
     _cleanup_sessions()
@@ -132,6 +142,7 @@ def test_profile_payload(seeded_database: None) -> None:
     assert body["active_sessions"] >= 1
     # 没改过密码时为空，前端显示「还没有修改过密码」
     assert body["password_updated_at"] is None
+    client.cookies.clear()
     assert client.get("/api/user/profile").status_code == 401
     _cleanup_sessions()
 

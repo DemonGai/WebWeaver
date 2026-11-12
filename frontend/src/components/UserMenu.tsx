@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { authToken } from '@/api/client'
 import { endpoints } from '@/api/endpoints'
+import { useAuth } from '@/auth/AuthProvider'
 import { useApi } from '@/hooks/useApi'
+import { formatRemaining } from '@/lib/format'
 import type { MenuRow, UserMenuPayload } from '@/types/domain'
 import {
   IconBell,
@@ -53,6 +54,7 @@ const ROUTES: Record<string, string> = {
  */
 export function UserMenu() {
   const navigate = useNavigate()
+  const { signOut, session } = useAuth()
   const { data } = useApi<UserMenuPayload>(() => endpoints.userMenu())
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -103,14 +105,9 @@ export function UserMenu() {
       return
     }
 
-    // 注销失败（令牌早已失效）也要把本地状态清干净，否则会一直带着死令牌
-    try {
-      await endpoints.logout()
-    } catch {
-      // 忽略：401 说明会话本来就没了
-    }
-    authToken.clear()
-    navigate('/login')
+    // signOut 内部已经兜住了「会话早就失效」的情况，并在成功后广播给其他标签页
+    await signOut()
+    navigate('/login', { replace: true })
   }
 
   return (
@@ -177,13 +174,33 @@ export function UserMenu() {
             </div>
           ))}
 
-          {/* 页脚 */}
-          <div className="mx-3 mt-0.5 flex items-center justify-between border-t border-[var(--line)] py-2.5 text-[10px] text-[var(--ink-400)]">
-            <span className="flex items-center gap-1">
-              <IconClock size={10} />
-              {data.last_login}
-            </span>
-            <span className="tnum">{data.version}</span>
+          {/* 页脚：最近登录 + 这次登录还能撑多久 */}
+          <div className="mx-3 mt-0.5 border-t border-[var(--line)] py-2.5 text-[10px] text-[var(--ink-400)]">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <IconClock size={10} />
+                {data.last_login}
+              </span>
+              <span className="tnum">{data.version}</span>
+            </div>
+            {session && (
+              <div className="mt-1 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <IconShield size={10} />
+                  登录有效期
+                </span>
+                <span
+                  className={
+                    session.refreshExpiresAt && session.refreshExpiresAt - Date.now() < 86_400_000
+                      ? 'text-amber-600'
+                      : undefined
+                  }
+                >
+                  {formatRemaining(session.refreshExpiresAt)}
+                  {session.remember ? '（记住我）' : ''}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}

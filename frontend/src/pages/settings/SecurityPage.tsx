@@ -1,18 +1,22 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
+import { useAuth } from '@/auth/AuthProvider'
 import { useApi } from '@/hooks/useApi'
 import { PageHeader, PageShell } from '@/components/Layout'
 import { Card, SectionHeader, StatusDot, type Tone } from '@/components/ui'
+import { ChangePasswordDialog } from '@/components/ChangePasswordDialog'
 import {
   IconActivity,
   IconAlert,
   IconCheckCircle,
   IconChevronRight,
+  IconClock,
   IconDevices,
   IconLock,
   IconShield,
 } from '@/components/icons'
-import { formatDateTime, formatRelative } from '@/lib/format'
+import { formatDateTime, formatRelative, formatRemaining } from '@/lib/format'
 import { ErrorState, Loading } from '@/pages/OverviewPage'
 
 const RESULT_TONE: Record<string, Tone> = {
@@ -22,6 +26,8 @@ const RESULT_TONE: Record<string, Tone> = {
 
 export default function SecurityPage() {
   const { data, status, error, reload } = useApi(endpoints.security, [])
+  const { session } = useAuth()
+  const [changing, setChanging] = useState(false)
 
   if (status === 'loading')
     return (
@@ -55,10 +61,58 @@ export default function SecurityPage() {
                 ? `上次修改：${formatDateTime(data.password_updated_at)}（${formatRelative(data.password_updated_at)}）`
                 : '还没有修改过密码，当前是初始化时设置的演示口令'}
             </p>
-            <Link to="/forgot-password" className="btn-ghost mt-3 !h-8 !text-[12px]">
-              通过邮箱重置密码
-              <IconChevronRight size={12} />
-            </Link>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setChanging(true)}
+                className="btn-dark !h-8 !text-[12px]"
+              >
+                <IconLock size={12} />
+                修改密码
+              </button>
+              <Link to="/forgot-password" className="btn-ghost !h-8 !text-[12px]">
+                邮件重置
+                <IconChevronRight size={12} />
+              </Link>
+            </div>
+            <p className="mt-2 text-[10.5px] leading-relaxed text-[var(--ink-400)]">
+              修改后会立即下线其他设备；忘记原密码时用「邮件重置」，那条路径会踢掉全部设备。
+            </p>
+          </Card>
+
+          <Card className="card-pad">
+            <SectionHeader icon={<IconClock size={14} />} title="登录有效期" />
+            <dl className="mt-2 divide-y divide-[var(--line)]">
+              <div className="flex items-center justify-between py-2.5">
+                <dt className="text-[11.5px] text-[var(--ink-400)]">访问令牌（自动续期）</dt>
+                <dd className="text-[12.5px] text-[var(--ink-900)]">
+                  {formatRemaining(session?.accessExpiresAt)}
+                  <span className="ml-1 text-[11px] text-[var(--ink-400)]">后换新</span>
+                </dd>
+              </div>
+              <div className="flex items-center justify-between py-2.5">
+                <dt className="text-[11.5px] text-[var(--ink-400)]">登录会话</dt>
+                <dd className="text-[12.5px] text-[var(--ink-900)]">
+                  {formatRemaining(session?.refreshExpiresAt)}
+                  {session?.remember && (
+                    <span className="ml-1.5 chip bg-blue-50 px-1.5 text-[10px] text-blue-600">
+                      记住我
+                    </span>
+                  )}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between py-2.5">
+                <dt className="text-[11.5px] text-[var(--ink-400)]">最迟需重新登录</dt>
+                <dd className="text-[12.5px] text-[var(--ink-900)]">
+                  {formatRemaining(session?.absoluteExpiresAt)}
+                  <span className="ml-1 text-[11px] text-[var(--ink-400)]">（上限）</span>
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-2 text-[10.5px] leading-relaxed text-[var(--ink-400)]">
+              访问令牌每 30 分钟换一次、用户无感；登录会话在活跃时会向后滑动，
+              但越不过上面的「最迟需重新登录」，到期后只能重新登录。
+            </p>
           </Card>
 
           <Card className="card-pad">
@@ -161,6 +215,15 @@ export default function SecurityPage() {
           未发现异常登录；如发现陌生设备，请到「登录设备管理」下线并修改密码。
         </p>
       )}
+
+      <ChangePasswordDialog
+        open={changing}
+        onClose={() => {
+          setChanging(false)
+          // 改密会顺带刷新改密时间与事件列表，关掉弹窗后重新拉一次
+          reload()
+        }}
+      />
     </PageShell>
   )
 }

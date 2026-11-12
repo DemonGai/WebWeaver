@@ -2,8 +2,14 @@
 
 两张表都是「短期凭证」，和业务数据放在一起但生命周期不同：
 
-- ``auth_sessions``：一次登录一行，注销/被踢/过期都只改自己的行（``revoked_at``）。
-  令牌明文不落库，只存 SHA-256 摘要，见 ``app/core/security.py``。
+- ``auth_sessions``：**一次登录（一台设备）一行**，同时承担两件事：
+  1. 存刷新令牌的摘要（``refresh_hash``），只有它能换新的访问令牌；
+  2. 作为会话的「开关」——``revoked_at`` 一置，同一会话签出的访问令牌
+     即使还没到期也会被拒（访问令牌里带了 ``sid``）。
+
+  刷新令牌每次使用都会轮转：旧摘要挪到 ``prev_refresh_hash`` 再从库里作废。
+  如果又有人拿着上一代来刷新，说明令牌被复制过，整场会话直接吊销。
+
 - ``password_reset_tokens``：一次「忘记密码」一行，用完标记 ``used_at``。
   重置成功时同表顺带把该成员的会话全部吊销——改密码就应该踢掉所有设备。
 
@@ -25,7 +31,7 @@ class AuthSession(IdMixin, table=True):
 
     __tablename__ = "auth_sessions"
     __table_args__ = (
-        {"comment": "登录会话表：一次登录一行，令牌只存摘要，注销/过期置 revoked_at"},
+        {"comment": "登录会话表：一次登录一行，刷新令牌只存摘要，注销/过期置 revoked_at"},
     )
 
     user_id: UUID = Field(
@@ -33,12 +39,20 @@ class AuthSession(IdMixin, table=True):
         index=True,
         sa_column_kwargs={"comment": "成员 ID，指向 users.id"},
     )
-    token_hash: str = Field(
+    refresh_hash: str = Field(
         max_length=64,
         unique=True,
         index=True,
-        description="令牌摘要",
-        sa_column_kwargs={"comment": "令牌的 SHA-256 摘要（64 位十六进制，明文不落库）"},
+        description="刷新令牌摘要",
+        sa_column_kwargs={"comment": "刷新令牌的 SHA-256 摘要（64 位十六进制，明文不落库）"},
+    )
+    prev_refresh_hash: str | None = Field(
+        default=None,
+        max_length=64,
+        index=True,
+        sa_column_kwargs={
+            "comment": "上一代刷新令牌摘要：再次出现说明令牌被复制，触发整场会话吊销"
+        },
     )
     issued_at: datetime = Field(
         default_factory=utcnow,
@@ -48,7 +62,26 @@ class AuthSession(IdMixin, table=True):
     expires_at: datetime = Field(
         sa_type=DateTime(timezone=True),
         index=True,
-        sa_column_kwargs={"comment": "过期时间（UTC），到期后不再接受该令牌"},
+        sa_column_kwargs={"comment": "刷新令牌过期时间（UTC），每次续期向后滑动"},
+    )
+    absolute_expires_at: datetime = Field(
+        sa_type=DateTime(timezone=True),
+        index=True,
+        sa_column_kwargs={
+            "comment": "会话绝对上限（UTC）：无论怎么续期，超过此时间必须重新登录"
+        },
+    )
+    remember: bool = Field(
+        default=False,
+        sa_column_kwargs={
+            "server_default": "false",
+            "comment": "登录时是否勾选「记住我」：决定每次续期把有效期推到多长",
+        },
+    )
+    rotated_at: datetime | None = Field(
+        default=None,
+        sa_type=DateTime(timezone=True),
+        sa_column_kwargs={"comment": "最近一次刷新令牌轮转时间（UTC）"},
     )
     revoked_at: datetime | None = Field(
         default=None,
@@ -59,13 +92,14 @@ class AuthSession(IdMixin, table=True):
         default=None,
         max_length=64,
         sa_column_kwargs={
-            "comment": "吊销原因：logout 主动注销 / password_reset 改密 / admin 被踢"
+            "comment": "吊销原因：logout / logout_all / password_change / password_reset "
+            "/ reuse_detected / admin"
         },
     )
     last_seen_at: datetime | None = Field(
         default=None,
         sa_type=DateTime(timezone=True),
-        sa_column_kwargs={"comment": "最近一次使用该令牌的时间（UTC）"},
+        sa_column_kwargs={"comment": "最近一次使用该会话的时间（UTC）"},
     )
     ip_address: str | None = Field(
         default=None,

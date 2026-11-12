@@ -140,7 +140,24 @@ export const endpoints = {
     display_name?: string
   }) => api.post<AuthResponse>('/auth', { action: 'register', ...body }),
 
-  logout: () => api.post<AuthResponse>('/auth', { action: 'logout' }),
+  logout: () => api.raw<AuthResponse>('/auth', { method: 'POST', body: JSON.stringify({ action: 'logout' }) }),
+
+  /** 下线所有其他设备（keep_current 决定是否保留当前这台） */
+  logoutAll: (keepCurrent = true) =>
+    api.post<AuthResponse>('/auth', { action: 'logout_all', keep_current: keepCurrent }),
+
+  /** 已登录改密码：必须给出原密码 */
+  changePassword: (body: { current_password: string; password: string; confirm: string }) =>
+    api.post<AuthResponse>('/auth', { action: 'change_password', ...body }),
+
+  /**
+   * 用刷新令牌换一对新令牌。一般由 client.ts 自动调用；
+   * 页面里只在「手动立即续期」这种场景才直接调。
+   */
+  refresh: () => api.raw<AuthResponse>('/auth/refresh', { method: 'POST' }),
+
+  /** 登录状态检测：未登录返回 200 + authenticated: false，不会触发续期 */
+  session: () => api.raw<AuthResponse>('/auth/session'),
 
   me: () => api.get<AuthResponse>('/auth/me'),
 

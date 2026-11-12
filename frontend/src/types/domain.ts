@@ -430,17 +430,35 @@ export interface PasswordRule {
 /**
  * 认证统一响应（对应后端 schemas/auth.py::AuthResponse）。
  * 单入口一个信封，所以除了 ok/action/message 之外都是按动作可选的字段：
- * 登录 / 注册读 token 与 user，找回密码读 email / cooldown，
+ * 登录 / 注册读 user 与各到期时间，找回密码读 email / cooldown，
  * 重置密码读 checks / strength / revoked_sessions。
+ *
+ * **令牌不在响应体里**：两个令牌都走 httpOnly Cookie，前端读不到也不需要读，
+ * 只需要知道「还剩多久」来安排续期。
  */
 export interface AuthResponse {
   ok: boolean
   action: string
   message: string
+  /** 仅 `/auth/session` 会给出明确的是/否 */
+  authenticated?: boolean | null
 
   user?: AuthUser | null
-  token?: string | null
-  expires_at?: string | null
+
+  /** 令牌时长（秒）：访问令牌用于安排静默续期，刷新令牌用于展示会话有效期 */
+  access_expires_at?: string | null
+  refresh_expires_at?: string | null
+  absolute_expires_at?: string | null
+  access_ttl?: number | null
+  refresh_ttl?: number | null
+  absolute_ttl?: number | null
+  remember?: boolean | null
+
+  /** 会话状态 */
+  session_id?: string | null
+  signed_in_at?: string | null
+  last_seen_at?: string | null
+  other_sessions?: number | null
 
   email?: string | null
   cooldown?: number | null

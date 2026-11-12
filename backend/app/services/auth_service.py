@@ -22,7 +22,8 @@ r"""账号安全服务：验证码、密码规则，以及登录 / 注册 / 重�
 import re
 import secrets
 import time
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import Request
@@ -31,7 +32,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.logging_config import logger
-from app.core.security import hash_password, new_token, token_digest, verify_password
+from app.core.security import (
+    TokenError,
+    decode_access_token,
+    encode_access_token,
+    hash_password,
+    new_token,
+    token_digest,
+    verify_password,
+)
 from app.models import (
     AuditAction,
     AuditResourceType,
@@ -198,47 +207,217 @@ async def profile_of(session: AsyncSession, user: User) -> AuthUser:
     )
 
 
-async def _issue_session(
+@dataclass(frozen=True)
+class TokenBundle:
+    """一次签发的双令牌与各自的到期时间。
+
+    前端用 ``access_expires_at`` 安排静默续期，用 ``refresh_expires_at``
+    展示「这次登录还能撑多久」，``absolute_expires_at`` 是硬上限——
+    到了就必须重新登录，续期也救不回来。
+    """
+
+    user: User
+    session_id: UUID
+    access_token: str
+    refresh_token: str
+    access_expires_at: datetime
+    refresh_expires_at: datetime
+    absolute_expires_at: datetime
+    remember: bool
+
+    @property
+    def access_ttl_seconds(self) -> int:
+        return max(0, int((self.access_expires_at - utcnow()).total_seconds()))
+
+    @property
+    def refresh_ttl_seconds(self) -> int:
+        return max(0, int((self.refresh_expires_at - utcnow()).total_seconds()))
+
+
+def _access_ttl() -> timedelta:
+    return timedelta(minutes=settings.auth_access_ttl_minutes)
+
+
+def _refresh_ttl(remember: bool) -> timedelta:
+    minutes = (
+        settings.auth_refresh_ttl_remember_minutes
+        if remember
+        else settings.auth_refresh_ttl_minutes
+    )
+    return timedelta(minutes=minutes)
+
+
+def _absolute_deadline(now: datetime) -> datetime:
+    """会话硬上限：从登录那一刻算起，续期再多也越不过这条线。"""
+    return now + timedelta(minutes=settings.auth_absolute_ttl_minutes)
+
+
+def _bundle_of(
+    row: AuthSession,
+    user: User,
+    *,
+    refresh_token: str,
+    now: datetime,
+) -> TokenBundle:
+    """按会话行签一个访问令牌，凑成完整的 :class:`TokenBundle`。
+
+    访问令牌里的 ``sid`` 指向会话行：这是「踢人」能立刻生效的原因。
+    只看 JWT 的话，一个还没过期的访问令牌在被踢之后仍然可用，
+    服务端必须回表确认这场登录是否还活着。
+    """
+    access_token, access_expires_at, _ = encode_access_token(
+        subject=str(user.id),
+        session_id=str(row.id),
+        ttl=_access_ttl(),
+        secret=settings.auth_jwt_secret,
+        now=now,
+    )
+    return TokenBundle(
+        user=user,
+        session_id=row.id,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        access_expires_at=access_expires_at,
+        refresh_expires_at=row.expires_at,
+        absolute_expires_at=row.absolute_expires_at,
+        remember=row.remember,
+    )
+
+
+async def issue_session(
     session: AsyncSession,
     user: User,
     request: Request | None,
     *,
     remember: bool,
-) -> tuple[str, datetime]:
-    """签发会话令牌，返回 ``(明文令牌, 过期时间)``；库里只落摘要。"""
-    token = new_token()
-    minutes = (
-        settings.auth_session_ttl_remember_minutes
-        if remember
-        else settings.auth_session_ttl_minutes
+) -> TokenBundle:
+    """新登录：建一场会话，签一对令牌。库里只落刷新令牌的摘要。"""
+    now = utcnow()
+    refresh_token = new_token()
+    refresh_ttl = _refresh_ttl(remember)
+
+    row = AuthSession(
+        user_id=user.id,
+        refresh_hash=token_digest(refresh_token),
+        expires_at=now + refresh_ttl,
+        absolute_expires_at=_absolute_deadline(now),
+        remember=remember,
+        last_seen_at=now,
+        ip_address=_client_ip(request),
+        user_agent=_user_agent(request),
     )
-    expires_at = utcnow() + timedelta(minutes=minutes)
-    session.add(
-        AuthSession(
-            user_id=user.id,
-            token_hash=token_digest(token),
-            expires_at=expires_at,
-            ip_address=_client_ip(request),
-            user_agent=_user_agent(request),
-        )
-    )
-    return token, expires_at
+    session.add(row)
+    await session.flush()  # 先拿到 row.id，访问令牌的 sid 要用
+    return _bundle_of(row, user, refresh_token=refresh_token, now=now)
 
 
-async def resolve_session(
-    session: AsyncSession, token: str | None
-) -> tuple[User, AuthSession] | None:
-    """令牌 → 成员；令牌不存在、已吊销、已过期、成员非 active 一律视为无效。"""
-    if not token:
+async def rotate_refresh(
+    session: AsyncSession,
+    raw_refresh: str | None,
+    request: Request | None = None,
+) -> TokenBundle | None:
+    """用刷新令牌换一对新令牌；无效时返回 ``None``。
+
+    每次成功刷新都会轮转：新令牌写进 ``refresh_hash``，旧摘要挪到
+    ``prev_refresh_hash``。如果拿上一代来刷新，说明这个令牌被复制过
+    （正常客户端只会用最新的那个），整场会话直接吊销——重放者拿不到新的，
+    真正的用户重新登录一次，损失可控。
+    """
+    if not raw_refresh:
         return None
 
+    now = utcnow()
+    digest = token_digest(raw_refresh)
+
     row = await session.scalar(
-        select(AuthSession).where(AuthSession.token_hash == token_digest(token))
+        select(AuthSession).where(AuthSession.refresh_hash == digest)
     )
-    if row is None or row.revoked_at is not None or row.expires_at <= utcnow():
+
+    if row is None:
+        # 可能是「上一代」被拿来重放。找到就整场吊销，并把这件事记进审计。
+        replayed = await session.scalar(
+            select(AuthSession).where(AuthSession.prev_refresh_hash == digest)
+        )
+        if replayed is not None and replayed.revoked_at is None:
+            replayed.revoked_at = now
+            replayed.revoked_reason = "reuse_detected"
+            session.add(replayed)
+            await session.commit()
+            logger.warning(
+                "检测到刷新令牌重放，会话 {} 已吊销", replayed.id
+            )
+            await _audit(
+                session,
+                request,
+                action=AuditAction.logout,
+                operator=str(replayed.user_id),
+                ok=False,
+                detail="刷新令牌重复使用：疑似令牌被复制，会话已强制吊销",
+                error_message="刷新令牌已失效",
+            )
+        return None
+
+    if (
+        row.revoked_at is not None
+        or row.expires_at <= now
+        or row.absolute_expires_at <= now
+    ):
         return None
 
     user = await session.get(User, row.user_id)
+    if user is None or user.status is not UserStatus.active:
+        row.revoked_at = now
+        row.revoked_reason = "account_disabled"
+        session.add(row)
+        await session.commit()
+        return None
+
+    new_refresh = new_token()
+    row.prev_refresh_hash = row.refresh_hash
+    row.refresh_hash = token_digest(new_refresh)
+    row.rotated_at = now
+    row.last_seen_at = now
+    # 滑动续期：从「现在」再往后推一个窗口，但不能越过会话的硬上限
+    row.expires_at = min(now + _refresh_ttl(row.remember), row.absolute_expires_at)
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+
+    return _bundle_of(row, user, refresh_token=new_refresh, now=now)
+
+
+async def resolve_access(
+    session: AsyncSession, token: str | None
+) -> tuple[User, AuthSession] | None:
+    """访问令牌 → 成员与会话行；任何一环不成立都返回 ``None``。
+
+    四道检查缺一不可：签名与有效期（JWT 自己保证）、会话存在、
+    会话未吊销/未过期、成员仍是 active。后两道必须回表，
+    否则「把某人踢下线」要等到访问令牌自然过期才生效。
+    """
+    if not token:
+        return None
+
+    try:
+        payload = decode_access_token(token, secret=settings.auth_jwt_secret)
+    except TokenError:
+        return None
+
+    try:
+        session_id = UUID(str(payload["sid"]))
+        user_id = UUID(str(payload["sub"]))
+    except (ValueError, KeyError):
+        return None
+
+    row = await session.get(AuthSession, session_id)
+    if row is None or row.user_id != user_id or row.revoked_at is not None:
+        return None
+
+    now = utcnow()
+    if row.expires_at <= now or row.absolute_expires_at <= now:
+        return None
+
+    user = await session.get(User, user_id)
     if user is None or user.status is not UserStatus.active:
         return None
     return user, row
@@ -357,12 +536,12 @@ async def login(
         )
         return AuthResponse(ok=False, action="login", message=message)
 
-    # 成功：清计数、记登录时间、签发令牌
+    # 成功：清计数、记登录时间、签发一对令牌
     user.failed_login_count = 0
     user.locked_until = None
     user.last_login_at = now
     session.add(user)
-    token, expires_at = await _issue_session(session, user, request, remember=remember)
+    bundle = await issue_session(session, user, request, remember=remember)
     await session.commit()
 
     profile = await profile_of(session, user)
@@ -372,15 +551,25 @@ async def login(
         action=AuditAction.login,
         operator=user.username,
         ok=True,
-        detail=f"登录成功（角色：{'、'.join(profile.roles) or '无'}）",
+        detail=(
+            f"登录成功（角色：{'、'.join(profile.roles) or '无'}，"
+            f"{'记住我，' if remember else ''}"
+            f"会话最长 {settings.auth_absolute_ttl_minutes // 1440} 天）"
+        ),
     )
     return AuthResponse(
         ok=True,
         action="login",
         message=f"欢迎回来，{user.display_name}",
         user=profile,
-        token=token,
-        expires_at=expires_at,
+        access_token=bundle.access_token,
+        refresh_token=bundle.refresh_token,
+        access_expires_at=bundle.access_expires_at,
+        refresh_expires_at=bundle.refresh_expires_at,
+        absolute_expires_at=bundle.absolute_expires_at,
+        access_ttl=bundle.access_ttl_seconds,
+        refresh_ttl=bundle.refresh_ttl_seconds,
+        remember=bundle.remember,
     )
 
 
@@ -388,37 +577,271 @@ async def logout(
     session: AsyncSession,
     *,
     request: Request | None,
-    token: str | None,
+    access_token: str | None,
+    refresh_token: str | None = None,
 ) -> AuthResponse:
-    """注销当前令牌。令牌无效也返回成功——注销是幂等的，不值得报错。"""
-    resolved = await resolve_session(session, token)
-    if resolved is None:
-        if token:
-            row = await session.scalar(
-                select(AuthSession).where(AuthSession.token_hash == token_digest(token))
+    """注销当前会话。令牌无效也返回成功——注销是幂等的，不值得报错。
+
+    访问令牌过期后仍然要能退出：用户点「退出登录」时手上那个短令牌
+    可能刚过期几分钟，如果只认它，这场会话就会一直躺在库里直到自然失效。
+    所以访问令牌解析不出来时，再用刷新令牌的摘要找一次会话行。
+    """
+    resolved = await resolve_access(session, access_token)
+    if resolved is None and refresh_token:
+        row = await session.scalar(
+            select(AuthSession).where(
+                AuthSession.refresh_hash == token_digest(refresh_token)
             )
-            if row is not None and row.revoked_at is None:
-                row.revoked_at = utcnow()
-                row.revoked_reason = "logout"
-                session.add(row)
-                await session.commit()
+        )
+        if row is not None:
+            user = await session.get(User, row.user_id)
+            if user is not None:
+                resolved = (user, row)
+
+    if resolved is None:
         return AuthResponse(ok=True, action="logout", message="已退出登录")
 
     user, row = resolved
-    row.revoked_at = utcnow()
-    row.revoked_reason = "logout"
-    session.add(row)
-    await session.commit()
+    if row.revoked_at is None:
+        row.revoked_at = utcnow()
+        row.revoked_reason = "logout"
+        session.add(row)
+        await session.commit()
 
+        await _audit(
+            session,
+            request,
+            action=AuditAction.logout,
+            operator=user.username,
+            ok=True,
+            detail="退出登录，当前会话已吊销（访问令牌与刷新令牌同时失效）",
+        )
+    return AuthResponse(ok=True, action="logout", message="已退出登录")
+
+
+async def logout_everywhere(
+    session: AsyncSession,
+    *,
+    request: Request | None,
+    user: User,
+    keep_session_id: UUID | None,
+) -> AuthResponse:
+    """把本人名下所有会话踢下线（可选择留下当前这台）。"""
+    revoked = await _revoke_sessions(
+        session,
+        user.id,
+        reason="logout_all",
+        keep=keep_session_id,
+    )
+    await session.commit()
     await _audit(
         session,
         request,
         action=AuditAction.logout,
         operator=user.username,
         ok=True,
-        detail="退出登录，当前令牌已吊销",
+        detail=f"下线全部其他设备，共吊销 {revoked} 场会话",
     )
-    return AuthResponse(ok=True, action="logout", message="已退出登录")
+    return AuthResponse(
+        ok=True,
+        action="logout_all",
+        message=f"已下线其他 {revoked} 台设备" if revoked else "没有其他在线设备",
+        revoked_sessions=revoked,
+    )
+
+
+# ── 修改密码（已登录） ────────────────────────────────────────
+
+
+async def change_password(
+    session: AsyncSession,
+    *,
+    request: Request | None,
+    user: User,
+    current_session: AuthSession,
+    current_password: str,
+    password: str,
+    confirm: str,
+) -> AuthResponse:
+    """已登录状态下改密码。
+
+    与「忘记密码」的区别是这里必须先证明「你知道原密码」——否则一台没锁屏的
+    电脑就能被顺手改掉密码，把真正的主人关在门外。
+
+    改完做三件事：
+    1. 踢掉**其他**所有会话（别的设备上的登录不该继续有效）；
+    2. 当前会话轮转刷新令牌（旧的那份即便泄露也没用了）；
+    3. 重置失败计数与锁定，避免用户被自己之前的手误连累。
+    """
+    now = utcnow()
+    checks = password_checks(password, user.email, confirm)
+    strength = strength_of(checks)
+
+    if not verify_password(current_password, user.password_hash):
+        user.failed_login_count += 1
+        session.add(user)
+        await session.commit()
+        await _audit(
+            session,
+            request,
+            action=AuditAction.reset_password,
+            operator=user.username,
+            ok=False,
+            detail="修改密码失败：原密码不正确",
+            error_message="原密码不正确",
+        )
+        return AuthResponse(
+            ok=False, action="change_password", message="原密码不正确", checks=checks
+        )
+
+    if password == current_password:
+        return AuthResponse(
+            ok=False,
+            action="change_password",
+            message="新密码不能与原密码相同",
+            checks=checks,
+            strength=strength,
+        )
+
+    failed = [c.label for c in checks if not c.passed]
+    if failed:
+        message = f"密码未满足：{'、'.join(failed)}"
+        await _audit(
+            session,
+            request,
+            action=AuditAction.reset_password,
+            operator=user.username,
+            ok=False,
+            detail="修改密码失败：新密码强度不足",
+            error_message=message,
+        )
+        return AuthResponse(
+            ok=False,
+            action="change_password",
+            message=message,
+            checks=checks,
+            strength=strength,
+        )
+
+    user.password_hash = hash_password(password)
+    user.failed_login_count = 0
+    user.locked_until = None
+    session.add(user)
+
+    revoked = await _revoke_sessions(
+        session, user.id, reason="password_change", keep=current_session.id
+    )
+
+    # 当前会话也换一份刷新令牌：改密前泄露出去的那份立刻作废
+    new_refresh = new_token()
+    current_session.prev_refresh_hash = current_session.refresh_hash
+    current_session.refresh_hash = token_digest(new_refresh)
+    current_session.rotated_at = now
+    current_session.last_seen_at = now
+    current_session.expires_at = min(
+        now + _refresh_ttl(current_session.remember), current_session.absolute_expires_at
+    )
+    session.add(current_session)
+    await session.commit()
+    await session.refresh(current_session)
+
+    bundle = _bundle_of(current_session, user, refresh_token=new_refresh, now=now)
+    await _audit(
+        session,
+        request,
+        action=AuditAction.reset_password,
+        operator=user.username,
+        ok=True,
+        detail=f"修改密码成功，其他 {revoked} 场会话已吊销，当前会话已轮转令牌",
+    )
+    return AuthResponse(
+        ok=True,
+        action="change_password",
+        message="密码已修改，其他设备需要重新登录",
+        user=await profile_of(session, user),
+        checks=checks,
+        strength=4,
+        revoked_sessions=revoked,
+        access_token=bundle.access_token,
+        refresh_token=bundle.refresh_token,
+        access_expires_at=bundle.access_expires_at,
+        refresh_expires_at=bundle.refresh_expires_at,
+        absolute_expires_at=bundle.absolute_expires_at,
+        access_ttl=bundle.access_ttl_seconds,
+        refresh_ttl=bundle.refresh_ttl_seconds,
+        remember=bundle.remember,
+    )
+
+
+# ── 会话状态（登录态检测） ────────────────────────────────────
+
+
+def access_expiry_of(token: str | None) -> datetime | None:
+    """从访问令牌里读到期时间；令牌无效返回 ``None``。
+
+    只用来给前端显示倒计时，不承担鉴权职责——验证过没验证过都不影响
+    它返回的那个时间点。真正放行与否看 :func:`resolve_access`。
+    """
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token, secret=settings.auth_jwt_secret)
+    except TokenError:
+        return None
+    exp = payload.get("exp")
+    if not isinstance(exp, int):
+        return None
+    return datetime.fromtimestamp(exp, UTC)
+
+
+async def session_state(
+    session: AsyncSession,
+    user: User,
+    row: AuthSession,
+    *,
+    access_expires_at: datetime | None = None,
+) -> AuthResponse:
+    """当前会话的完整状态：谁、还剩多久、其他设备几台。
+
+    前端启动时调它判断「已登录 / 未登录」，运行中定时调它刷新倒计时。
+    ``access_ttl`` 是给前端安排续期用的：剩余时间小于阈值就该换令牌了。
+    """
+    now = utcnow()
+    others = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(AuthSession)
+            .where(
+                AuthSession.user_id == user.id,
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > now,
+                AuthSession.absolute_expires_at > now,
+                AuthSession.id != row.id,
+            )
+        )
+        or 0
+    )
+    access_left = (
+        max(0, int((access_expires_at - now).total_seconds())) if access_expires_at else 0
+    )
+    return AuthResponse(
+        ok=True,
+        action="session",
+        message="已登录",
+        authenticated=True,
+        user=await profile_of(session, user),
+        access_expires_at=access_expires_at,
+        refresh_expires_at=row.expires_at,
+        absolute_expires_at=row.absolute_expires_at,
+        access_ttl=access_left,
+        refresh_ttl=max(0, int((row.expires_at - now).total_seconds())),
+        absolute_ttl=max(0, int((row.absolute_expires_at - now).total_seconds())),
+        remember=row.remember,
+        other_sessions=others,
+        session_id=str(row.id),
+        signed_in_at=row.issued_at,
+        last_seen_at=row.last_seen_at,
+    )
 
 
 # ── 注册 ─────────────────────────────────────────────────────
@@ -520,7 +943,7 @@ async def register(
     else:
         logger.warning("注册时未找到角色 {}，成员 {} 将没有任何权限", role_code, username)
 
-    token, expires_at = await _issue_session(session, user, request, remember=False)
+    bundle = await issue_session(session, user, request, remember=False)
     await session.commit()
 
     profile = await profile_of(session, user)
@@ -541,8 +964,14 @@ async def register(
         action="register",
         message=f"注册成功，已加入工作区{'（所有者）' if bootstrap else ''}",
         user=profile,
-        token=token,
-        expires_at=expires_at,
+        access_token=bundle.access_token,
+        refresh_token=bundle.refresh_token,
+        access_expires_at=bundle.access_expires_at,
+        refresh_expires_at=bundle.refresh_expires_at,
+        absolute_expires_at=bundle.absolute_expires_at,
+        access_ttl=bundle.access_ttl_seconds,
+        refresh_ttl=bundle.refresh_ttl_seconds,
+        remember=False,
     )
 
 

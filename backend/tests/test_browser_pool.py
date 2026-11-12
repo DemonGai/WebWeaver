@@ -65,11 +65,19 @@ def clean_test_browsers() -> Iterator[None]:
 
 
 def _login(account: str = "admin_chen", password: str = DEMO_PASSWORD) -> str:
+    """登录并从 Cookie 里取访问令牌。
+
+    令牌不再出现在响应体里（httpOnly Cookie 才拿得到），但测试仍需要一份
+    可直接放进 Authorization 头的凭据——两者指向同一个会话，等价。
+    """
+    client.cookies.clear()
     body = client.post(
         "/api/auth", json={"action": "login", "account": account, "password": password}
     ).json()
     assert body["ok"] is True, body
-    return body["token"]
+    token = client.cookies.get("wv_at")
+    assert token, "登录后应当下发访问令牌 Cookie"
+    return token
 
 
 def _auth(token: str) -> dict[str, str]:

@@ -187,7 +187,6 @@ def fingerprints(snapshot: Snapshot) -> FingerprintPayload:
         family_count[fp.platform_family] += 1
 
     rows.sort(key=lambda item: (not item.supported, item.fp_id))
-    mobile = family_count[PlatformFamily.android] + family_count[PlatformFamily.ios]
     probed = sum(1 for item in rows if item.probe_state in ("fresh", "stale"))
 
     return FingerprintPayload(
@@ -196,11 +195,13 @@ def fingerprints(snapshot: Snapshot) -> FingerprintPayload:
         supported_kernels=supported_kernels,
         probed=probed,
         stale=sum(1 for item in rows if item.probe_state == "stale"),
+        # 按平台族逐个列，不做「移动」这类合并分组——分组会让人以为 Android 和 iOS 是一回事
         filters=[
             FilterItem(key="all", label="全部", count=len(rows)),
             FilterItem(key="windows", label="Windows", count=family_count[PlatformFamily.windows]),
             FilterItem(key="macos", label="macOS", count=family_count[PlatformFamily.macos]),
-            FilterItem(key="mobile", label="移动", count=mobile),
+            FilterItem(key="android", label="Android", count=family_count[PlatformFamily.android]),
+            FilterItem(key="ios", label="iOS", count=family_count[PlatformFamily.ios]),
         ],
         templates=rows,
         shown=len(rows),

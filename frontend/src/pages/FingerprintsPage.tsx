@@ -52,10 +52,8 @@ const PROBE_CHIP: Record<ProbeState, { label: string; className: string }> = {
   failed: { label: '采集失败', className: 'bg-rose-50 text-rose-600' },
 }
 
-/** 筛选里的「移动」是分组，落到具体平台族是 android + ios。 */
-const MOBILE_FAMILIES: PlatformFamily[] = ['android', 'ios']
-const matchesTab = (family: PlatformFamily, tab: string) =>
-  tab === 'all' || family === tab || (tab === 'mobile' && MOBILE_FAMILIES.includes(family))
+/** 筛选按平台族逐个列（Windows / macOS / Android / iOS），不再有「移动」这一层合并。 */
+const matchesTab = (family: PlatformFamily, tab: string) => tab === 'all' || family === tab
 
 type Toast = { tone: 'ok' | 'err'; text: string } | null
 
@@ -110,6 +108,12 @@ export default function FingerprintsPage() {
               .includes(keyword),
       )
   }, [data, tab, query, kernel])
+
+  // 页脚的「其中 N 条采集过」要跟当前筛选走，不能用全库数字——
+  // 切到 macOS 看见「显示 0 / 5 条，其中 5 条采集过」会让人以为筛错了
+  const probedInRows = rows.filter(
+    (t) => t.probe_state === 'fresh' || t.probe_state === 'stale',
+  ).length
 
   const openDetail = useCallback(
     async (id: string) => {
@@ -300,7 +304,7 @@ export default function FingerprintsPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] px-4 py-3">
           <div className="text-[11.5px] text-[var(--ink-500)]">
             显示 {rows.length} / {data.total} 条
-            {data.probed > 0 && `，其中 ${data.probed} 条采集过实测人格`}
+            {probedInRows > 0 && `，其中 ${probedInRows} 条采集过实测人格`}
           </div>
           <div className="text-[11px] text-[var(--ink-400)]">
             种子相同 = 同一个人；换种子就是换人

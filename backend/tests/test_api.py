@@ -5,6 +5,7 @@
 依赖 ``seeded_database`` 夹具写入种子数据（共 8 个实例）。
 """
 
+from collections import Counter
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -140,8 +141,14 @@ def test_fingerprints_list(seeded_database: None) -> None:
     # 四个内核对指纹的支持情况：CloakBrowser 与 fingerprint-chromium 认参数，
     # Camoufox 没做镜像，ungoogled 是纯净 Chromium 不带补丁。
     assert body["supported_kernels"] == 2
-    assert [f["key"] for f in body["filters"]] == ["all", "windows", "macos", "mobile"]
-    assert [f["count"] for f in body["filters"]] == [8, 5, 2, 1]
+    # 平台族逐个列，Android 与 iOS 各自一项，不合并成「移动」；
+    # 每项计数必须等于列表里该族的条数，不写死数字（开发库的指纹会增删）
+    filters = {f["key"]: f["count"] for f in body["filters"]}
+    assert list(filters) == ["all", "windows", "macos", "android", "ios"]
+    assert filters["all"] == body["total"]
+    by_family = Counter(t["platform_family"] for t in body["templates"])
+    for key in ("windows", "macos", "android", "ios"):
+        assert filters[key] == by_family[key], key
 
     # 种子是下发的唯一入口：没有种子就装配不出人格，所以每条都必须有
     assert all(t["seed"] for t in body["templates"])

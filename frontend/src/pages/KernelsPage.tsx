@@ -6,6 +6,7 @@ import { useApi } from '@/hooks/useApi'
 import { PageShell } from '@/components/Layout'
 import { Card, ProgressBar } from '@/components/ui'
 import { KernelMigrateDialog } from '@/components/KernelMigrateDialog'
+import { KernelScanDialog } from '@/components/KernelScanDialog'
 import {
   IconAlert,
   IconArrowRight,
@@ -23,7 +24,13 @@ import {
   IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
-import type { InstallJob, KernelCard, KernelStat, KernelVersion } from '@/types/domain'
+import type {
+  InstallJob,
+  KernelCard,
+  KernelPayload,
+  KernelStat,
+  KernelVersion,
+} from '@/types/domain'
 
 const toneTile: Record<string, string> = {
   blue: 'bg-blue-50 text-blue-600',
@@ -52,6 +59,8 @@ export default function KernelsPage() {
   const [versions, setVersions] = useState<{ id: string; anchor: HTMLElement } | null>(null)
   const [migrating, setMigrating] = useState<KernelCard | null>(null)
   const [job, setJob] = useState<InstallJob | null>(null)
+  /** 扫描结果弹窗：拿到 payload 才显示，null 表示关着 */
+  const [scanResult, setScanResult] = useState<KernelPayload | null>(null)
 
   useEffect(() => {
     if (!toast) return
@@ -88,9 +97,11 @@ export default function KernelsPage() {
   const rescan = async () => {
     setBusy('rescan')
     try {
-      await endpoints.rescanKernels()
+      // 接口返回的就是整份 payload：直接拿去渲染结果弹窗，不再弹一条
+      // 只说"已扫描"的 toast——用户想知道的是这次扫出了什么。
+      const result = await endpoints.rescanKernels()
       refresh()
-      notify('ok', '已重新扫描本地镜像')
+      setScanResult(result)
     } catch (err) {
       notify('err', err instanceof Error ? err.message : '扫描失败')
     } finally {
@@ -289,6 +300,8 @@ export default function KernelsPage() {
           notify('ok', message)
         }}
       />
+
+      <KernelScanDialog result={scanResult} onClose={() => setScanResult(null)} />
     </PageShell>
   )
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
@@ -7,10 +7,10 @@ import { Card, PillTabs, SearchInput } from '@/components/ui'
 import { StatTile } from '@/components/StatTile'
 import { SelectMenu } from '@/components/SelectMenu'
 import { Modal } from '@/components/Modal'
+import { Toast, useToast } from '@/components/Toast'
 import { FingerprintDialog } from '@/components/FingerprintDialog'
 import { FingerprintDrawer } from '@/components/FingerprintDrawer'
 import {
-  IconAlert,
   IconAndroid,
   IconApple,
   IconCheckCircle,
@@ -23,7 +23,6 @@ import {
   IconSparkle,
   IconTrash,
   IconWindows,
-  IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
 import type {
@@ -55,8 +54,6 @@ const PROBE_CHIP: Record<ProbeState, { label: string; className: string }> = {
 /** 筛选按平台族逐个列（Windows / macOS / Android / iOS），不再有「移动」这一层合并。 */
 const matchesTab = (family: PlatformFamily, tab: string) => tab === 'all' || family === tab
 
-type Toast = { tone: 'ok' | 'err'; text: string } | null
-
 export default function FingerprintsPage() {
   const { data, status, error, reload, refresh } = useApi(endpoints.fingerprints, [])
   const caps = useApi(endpoints.fingerprintCapabilities, [])
@@ -65,7 +62,7 @@ export default function FingerprintsPage() {
   const [tab, setTab] = useState('all')
   const [query, setQuery] = useState('')
   const [kernel, setKernel] = useState('')
-  const [toast, setToast] = useState<Toast>(null)
+  const { toast, notify, dismiss } = useToast()
   const [probing, setProbing] = useState('')
   const [detail, setDetail] = useState<FingerprintDetail | null>(null)
   const [dialog, setDialog] = useState<{ open: boolean; initial: FingerprintDetail | null }>({
@@ -73,14 +70,6 @@ export default function FingerprintsPage() {
     initial: null,
   })
   const [pendingDelete, setPendingDelete] = useState<FingerprintTemplate | null>(null)
-
-  useEffect(() => {
-    if (!toast) return
-    const timer = window.setTimeout(() => setToast(null), 4200)
-    return () => window.clearTimeout(timer)
-  }, [toast])
-
-  const notify = useCallback((tone: 'ok' | 'err', text: string) => setToast({ tone, text }), [])
 
   const kernelItems = useMemo(() => {
     const seen = new Map<string, string>()
@@ -190,20 +179,6 @@ export default function FingerprintsPage() {
           </button>
         }
       />
-
-      {toast && (
-        <div
-          className={`mb-3 flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[12px] ${
-            toast.tone === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'
-          }`}
-        >
-          {toast.tone === 'ok' ? <IconCheckCircle size={13} /> : <IconAlert size={13} />}
-          <span className="flex-1">{toast.text}</span>
-          <button type="button" onClick={() => setToast(null)} aria-label="关闭提示">
-            <IconX size={12} />
-          </button>
-        </div>
-      )}
 
       {/* 统计条：与内核管理同一套 StatTile（左图标 + 右数值/hint） */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -368,6 +343,8 @@ export default function FingerprintsPage() {
           如果还有实例在用这条指纹，后端会拒绝删除并提示是哪些实例。
         </p>
       </Modal>
+
+      <Toast toast={toast} onClose={dismiss} />
     </PageShell>
   )
 }

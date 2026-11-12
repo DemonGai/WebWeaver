@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
@@ -11,7 +11,6 @@ import {
   IconArrowUpRight,
   IconBox,
   IconCheck,
-  IconCheckCircle,
   IconClipboard,
   IconCloudDown,
   IconPlay,
@@ -23,6 +22,7 @@ import {
   IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
+import { Toast, useToast } from '@/components/Toast'
 import type { InstallJob, KernelCard, KernelVersion } from '@/types/domain'
 
 const toneTile: Record<string, string> = {
@@ -35,8 +35,6 @@ const toneTile: Record<string, string> = {
   dark: 'bg-[#18181b] text-white',
 }
 
-type Toast = { tone: 'ok' | 'err'; text: string } | null
-
 export default function KernelDetailPage() {
   const { slug = '' } = useParams()
   const { data, status, error, reload, refresh } = useApi(
@@ -46,17 +44,9 @@ export default function KernelDetailPage() {
 
   const [job, setJob] = useState<InstallJob | null>(null)
   const [busy, setBusy] = useState('')
-  const [toast, setToast] = useState<Toast>(null)
+  const { toast, notify, dismiss } = useToast()
   const [copied, setCopied] = useState('')
   const [customTag, setCustomTag] = useState('')
-
-  useEffect(() => {
-    if (!toast) return
-    const timer = window.setTimeout(() => setToast(null), 4200)
-    return () => window.clearTimeout(timer)
-  }, [toast])
-
-  const notify = useCallback((tone: 'ok' | 'err', text: string) => setToast({ tone, text }), [])
 
   // 进页面捡回正在跑的任务：刷新或离开再回来，后端那个拉取还在跑
   useEffect(() => {
@@ -182,22 +172,6 @@ export default function KernelDetailPage() {
       </div>
 
       <Hero card={card} />
-
-      {toast && (
-        <div
-          className={`mt-3 flex items-start gap-2 rounded-xl px-4 py-2.5 text-[12px] ${
-            toast.tone === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'
-          }`}
-        >
-          <span className="mt-[1px] shrink-0">
-            {toast.tone === 'ok' ? <IconCheckCircle size={13} /> : <IconAlert size={13} />}
-          </span>
-          <span className="flex-1">{toast.text}</span>
-          <button type="button" onClick={() => setToast(null)} className="shrink-0 opacity-60">
-            <IconX size={12} />
-          </button>
-        </div>
-      )}
 
       {!data.docker_ok && (
         <div className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 px-4 py-2.5 text-[12px] text-amber-800">
@@ -362,6 +336,7 @@ export default function KernelDetailPage() {
           </aside>
         </div>
       )}
+      <Toast toast={toast} onClose={dismiss} />
     </PageShell>
   )
 }

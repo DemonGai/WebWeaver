@@ -43,6 +43,29 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 悬浮通知入场：从下方 8px 处淡入，200ms 足够看出来是「冒出来的」，
+   再长就挡住用户看结果了 */
+@keyframes wv-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.toast-in {
+  animation: wv-toast-in 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-in {
+    animation: none;
+  }
+}
+
 /* Edge 会在 type=password 的输入框里塞一个自己的「显示密码」眼睛
    （::-ms-reveal 那个 UA 影子控件）。它只在用户真敲了字之后才冒出来，
    正好叠在页面自己的按钮上，看起来像两个眼睛。

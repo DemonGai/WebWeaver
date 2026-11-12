@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
@@ -9,9 +9,7 @@ import { SelectMenu } from '@/components/SelectMenu'
 import { BrowserDialog } from '@/components/BrowserDialog'
 import { Modal } from '@/components/Modal'
 import {
-  IconAlert,
   IconBolt,
-  IconCheckCircle,
   IconClock,
   IconFingerprint,
   IconGlobe,
@@ -29,6 +27,7 @@ import {
   IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
+import { Toast, useToast } from '@/components/Toast'
 import type {
   BrowserActionName,
   BrowserDetail,
@@ -52,8 +51,6 @@ const statusChip: Record<InstanceStatus, string> = {
   queued: 'bg-amber-50 text-amber-600',
 }
 
-type Toast = { tone: 'ok' | 'err'; text: string } | null
-
 export default function BrowserPoolPage() {
   const navigate = useNavigate()
   const { data, status, error, reload, refresh } = useApi(endpoints.browsers, [])
@@ -69,18 +66,7 @@ export default function BrowserPoolPage() {
     id: null,
   })
   const [confirming, setConfirming] = useState<InstanceSummary | null>(null)
-  const [toast, setToast] = useState<Toast>(null)
-
-  // 提示条自己消失：不要留一个需要手动关掉的黄色条
-  useEffect(() => {
-    if (!toast) return
-    const timer = window.setTimeout(() => setToast(null), 4000)
-    return () => window.clearTimeout(timer)
-  }, [toast])
-
-  const notify = useCallback((tone: 'ok' | 'err', text: string) => {
-    setToast({ tone, text })
-  }, [])
+  const { toast, notify, dismiss } = useToast()
 
   const instances = data?.instances ?? []
 
@@ -228,22 +214,6 @@ export default function BrowserPoolPage() {
           </button>
         }
       />
-
-      {toast && (
-        <div
-          className={`mb-3 flex items-start gap-2 rounded-xl px-4 py-2.5 text-[12px] ${
-            toast.tone === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'
-          }`}
-        >
-          <span className="mt-[1px] shrink-0">
-            {toast.tone === 'ok' ? <IconCheckCircle size={13} /> : <IconAlert size={13} />}
-          </span>
-          <span className="flex-1">{toast.text}</span>
-          <button type="button" onClick={() => setToast(null)} className="shrink-0 opacity-60">
-            <IconX size={12} />
-          </button>
-        </div>
-      )}
 
       {/* 筛选栏 */}
       <Card className="flex flex-wrap items-center justify-between gap-3 p-3.5">
@@ -513,6 +483,7 @@ export default function BrowserPoolPage() {
           对应的绑定流水一并清理。
         </p>
       </Modal>
+      <Toast toast={toast} onClose={dismiss} />
     </PageShell>
   )
 }

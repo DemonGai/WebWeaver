@@ -25,6 +25,7 @@ import {
   IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
+import { Toast, useToast } from '@/components/Toast'
 import type {
   InstallJob,
   KernelCard,
@@ -39,26 +40,16 @@ const statIcon: Record<string, ReactNode> = {
   monitor: <IconMonitor size={15} />,
 }
 
-type Toast = { tone: 'ok' | 'err'; text: string } | null
-
 export default function KernelsPage() {
   const { data, status, error, reload, refresh } = useApi(endpoints.kernels, [])
   const [busy, setBusy] = useState('')
-  const [toast, setToast] = useState<Toast>(null)
+  const { toast, notify, dismiss } = useToast()
   /** 版本浮层：记住是哪张卡、锚在哪个按钮上 */
   const [versions, setVersions] = useState<{ id: string; anchor: HTMLElement } | null>(null)
   const [migrating, setMigrating] = useState<KernelCard | null>(null)
   const [job, setJob] = useState<InstallJob | null>(null)
   /** 扫描结果弹窗：拿到 payload 才显示，null 表示关着 */
   const [scanResult, setScanResult] = useState<KernelPayload | null>(null)
-
-  useEffect(() => {
-    if (!toast) return
-    const timer = window.setTimeout(() => setToast(null), 4200)
-    return () => window.clearTimeout(timer)
-  }, [toast])
-
-  const notify = useCallback((tone: 'ok' | 'err', text: string) => setToast({ tone, text }), [])
 
   // 拉取中每隔 1.5 秒问一次；结束时 refresh 一次让镜像状态跟上
   const runningId = job && job.status === 'running' ? job.id : null
@@ -189,21 +180,6 @@ export default function KernelsPage() {
         </div>
       )}
 
-      {toast && (
-        <div
-          className={`mt-3 flex items-start gap-2 rounded-xl px-4 py-2.5 text-[12px] ${toast.tone === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'
-            }`}
-        >
-          <span className="mt-[1px] shrink-0">
-            {toast.tone === 'ok' ? <IconCheckCircle size={13} /> : <IconAlert size={13} />}
-          </span>
-          <span className="flex-1">{toast.text}</span>
-          <button type="button" onClick={() => setToast(null)} className="shrink-0 opacity-60">
-            <IconX size={12} />
-          </button>
-        </div>
-      )}
-
       {job && (
         <div className="mt-3 rounded-2xl border border-[var(--line)] bg-white px-4 py-3">
           <div className="flex items-center gap-2 text-[12px]">
@@ -304,6 +280,7 @@ export default function KernelsPage() {
         }}
       />
 
+      <Toast toast={toast} onClose={dismiss} />
       <KernelScanDialog result={scanResult} onClose={() => setScanResult(null)} />
     </PageShell>
   )

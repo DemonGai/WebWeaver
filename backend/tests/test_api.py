@@ -163,8 +163,9 @@ def test_fingerprints_list(seeded_database: None) -> None:
     assert body["probed"] == len(fresh) + len(stale)
 
     # 内核支持不代表这条指纹能下发：桌面内核伪装不成 Android，
-    # 要在列表里就标出来，而不是等用户点了才 422
-    android = next(t for t in body["templates"] if t["fp_id"] == "fp-android-c128")
+    # 要在列表里就标出来，而不是等用户点了才 422。
+    # 按平台族找，不绑具体编号——开发库里的 Fingerprint 会被增删
+    android = next(t for t in body["templates"] if t["platform_family"] == "android")
     assert android["supported"] is False
     assert "Android" in (android["unsupported_reason"] or "")
 

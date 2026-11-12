@@ -335,21 +335,15 @@ def test_migrate_requires_local_image(kernel_images: None) -> None:
     assert res.status_code == 400
 
 
-def test_set_primary_marks_single_kernel(kernel_images: None) -> None:
+def test_cards_follow_engine_order(kernel_images: None) -> None:
+    """卡片按引擎的展示顺序排，而不是按名字（名字序 Camoufox 会排第一）。"""
     cards = client.get("/api/kernels").json()["cards"]
-    target = next(c for c in cards if c["slug"] == "camoufox")
-
-    res = client.post(f"/api/kernels/{target['id']}/primary").json()
-    assert res["ok"] is True
-    assert res["primary_id"] == target["id"]
-
-    cards = client.get("/api/kernels").json()["cards"]
-    assert sum(1 for c in cards if c["is_primary"]) == 1
-    assert next(c for c in cards if c["is_primary"])["slug"] == "camoufox"
-
-    # 还原成 CloakBrowser 为主力，别把库留成测试时的状态
-    cloak = next(c for c in cards if c["slug"] == "cloakbrowser")
-    client.post(f"/api/kernels/{cloak['id']}/primary")
+    assert [c["slug"] for c in cards] == [
+        "cloakbrowser",
+        "camoufox",
+        "fingerprint-chromium",
+        "ungoogled-chromium",
+    ]
 
 
 def test_rescan_is_readonly(kernel_images: None) -> None:

@@ -250,8 +250,11 @@ export default function KernelsPage() {
         ))}
       </div>
 
-      {/* 四张引擎卡：等高等宽，版本明细走浮层，不参与网格排版 */}
-      <div className="mt-4 grid grid-cols-2 gap-4">
+      {/* 四张引擎卡。
+          版本明细走浮层，不参与网格排版；`auto-rows-fr` 让所有行按最高的那行
+          取齐——只用 `grid-cols-2` 时两行各算各的，Camoufox 的「暂未支持」块
+          比别的卡高 18px，第一行就整体比第二行高，四张卡看着参差不齐。 */}
+      <div className="mt-4 grid auto-rows-fr grid-cols-2 gap-4">
         {data.cards.map((card) => (
           <KernelCardView
             key={card.id}
@@ -399,7 +402,9 @@ function KernelCardView({
       {/* 镜像版本 */}
       <div className="mt-3.5 rounded-xl bg-[#fafafa] px-3.5 py-3">
         {disabled ? (
-          <div className="py-2 text-center">
+          /* 不加额外 py：这一块要和普通卡的「当前版本」那块一样高，
+             多出来的内边距会让整行被撑高，四张卡就参差了。 */
+          <div className="text-center">
             <p className="text-[12px] font-medium text-[var(--ink-500)]">暂未支持，敬请期待</p>
             <p className="mt-1 text-[10.5px] leading-relaxed text-[var(--ink-400)]">
               {card.unsupported_reason ?? '该内核还在做镜像，做好后这里会出现拉取入口'}
@@ -451,30 +456,24 @@ function KernelCardView({
         )}
       </div>
 
-      {/* 元信息 */}
-      <div className="mt-3 space-y-1.5 text-[11px] text-[var(--ink-400)]">
-        <div className="flex items-center gap-1.5">
-          <IconBox size={11} className="shrink-0" />
-          <span className="truncate font-mono text-[10.5px]" title={card.registry}>
-            {card.registry}:{card.slug}
+      {/* 元信息：镜像全名和扫描时间属于调试信息，详情页都有，列表上不重复 */}
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-[var(--ink-400)]">
+        {card.total_size && (
+          <span className="tnum flex items-center gap-1">
+            <IconBox size={11} />
+            {card.total_size}
           </span>
-          {card.total_size && (
-            <span className="ml-auto shrink-0 tnum text-[10.5px]">{card.total_size}</span>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="flex items-center gap-1">
-            <IconMonitor size={11} />
-            {card.instance_count} 台实例
+        )}
+        <span className="flex items-center gap-1">
+          <IconMonitor size={11} />
+          {card.instance_count} 台实例
+        </span>
+        {card.stale_count > 0 && (
+          <span className="flex items-center gap-1 text-amber-600">
+            <IconAlert size={11} />
+            {card.stale_count} 台仍在旧版本
           </span>
-          {card.stale_count > 0 && (
-            <span className="flex items-center gap-1 text-amber-600">
-              <IconAlert size={11} />
-              {card.stale_count} 台仍在旧版本
-            </span>
-          )}
-          <span className="ml-auto">扫描于 {card.scanned_at}</span>
-        </div>
+        )}
       </div>
 
       {/* 操作 */}

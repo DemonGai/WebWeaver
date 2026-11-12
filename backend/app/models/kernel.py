@@ -85,11 +85,6 @@ class Kernel(IdMixin, TimestampMixin, table=True):
         description="状态：active / testing / deprecated",
         sa_column_kwargs={"comment": "状态：active 可用 / testing 测试中 / deprecated 已弃用"},
     )
-    is_primary: bool = Field(
-        default=False,
-        description="是否为主力内核（新建实例默认使用）",
-        sa_column_kwargs={"comment": "是否为主力内核，新建实例默认使用"},
-    )
     pass_rate: int = Field(
         default=0,
         ge=0,

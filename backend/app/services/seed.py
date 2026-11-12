@@ -138,7 +138,6 @@ KERNELS = [
         "repo_url": "https://github.com/CloakHQ/CloakBrowser",
         "detection_level": "C++ 层注入",
         "status": KernelStatus.active,
-        "is_primary": True,
         "pass_rate": 98,
         "share": 46,
         "note": "主力内核，反检测通过率最高",
@@ -154,7 +153,6 @@ KERNELS = [
         "repo_url": "https://github.com/daijro/camoufox",
         "detection_level": "Juggler 层修改",
         "status": KernelStatus.active,
-        "is_primary": False,
         "pass_rate": 94,
         "share": 28,
         "note": "Firefox 系，适合对 Chromium 敏感的平台",
@@ -170,7 +168,6 @@ KERNELS = [
         "repo_url": "https://github.com/adryfish/fingerprint-chromium",
         "detection_level": "前端 JS 注入",
         "status": KernelStatus.testing,
-        "is_primary": False,
         "pass_rate": 87,
         "share": 18,
         "note": "开源方案，等待升级到 128 基线",
@@ -186,7 +183,6 @@ KERNELS = [
         "repo_url": "https://github.com/ungoogled-software/ungoogled-chromium",
         "detection_level": "原生隐私加固",
         "status": KernelStatus.deprecated,
-        "is_primary": False,
         "pass_rate": 72,
         "share": 8,
         "note": "版本偏旧，仅用于问题复现",
@@ -649,8 +645,8 @@ async def seed(session: AsyncSession, *, reset: bool = False) -> dict[str, int]:
         session.add(kernel)
         kernels[item["name"]] = kernel
     await session.flush()
-    # 直连实例没有指纹模板，内核取标记为主力的那个
-    primary_kernel = next(kernel for kernel in kernels.values() if kernel.is_primary)
+    # 直连实例没有指纹模板，内核取列表里的第一个（CloakBrowser）
+    primary_kernel = next(iter(kernels.values()))
 
     fingerprints: dict[str, Fingerprint] = {}
     for item in FINGERPRINTS:

@@ -520,7 +520,6 @@ export interface KernelCard {
   detection_level: string | null
   repo_url: string | null
   mirror_url: string | null
-  is_primary: boolean
 
   registry: string
   /** Camoufox 这类还没做镜像的为 false */
@@ -575,12 +574,6 @@ export interface KernelMigrationResult {
   ok: boolean
   version: string
   migrated: number
-  message: string
-}
-
-export interface PrimaryResponse {
-  ok: boolean
-  primary_id: string
   message: string
 }
 

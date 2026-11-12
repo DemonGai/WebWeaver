@@ -26,7 +26,6 @@ from app.models import (
     Browser,
     Group,
     Kernel,
-    KernelStatus,
 )
 from app.schemas.kernels import (
     KernelCard,
@@ -36,7 +35,6 @@ from app.schemas.kernels import (
     KernelStat,
     KernelVersion,
     MigrationResult,
-    PrimaryResponse,
 )
 from app.services import audit, kernel_image, kernel_scan
 from app.services.kernel_scan import engine_slug, human_size, version_key
@@ -129,8 +127,11 @@ async def _load_images() -> tuple[list[kernel_image.ImageInfo], bool, str | None
 
 async def payload(session: AsyncSession) -> KernelPayload:
     """读台账 + 扫本地镜像，组装页面数据。"""
-    statement = select(Kernel).order_by(Kernel.is_primary.desc(), Kernel.name)
-    kernels = list((await session.scalars(statement)).all())
+    # 按引擎的展示顺序排（ENGINE_SPECS 的键序），不按名字：名字序会把
+    # Camoufox 排到最前，而 CloakBrowser 才是默认引擎。
+    kernels = list((await session.scalars(select(Kernel))).all())
+    order = {slug: index for index, slug in enumerate(ENGINE_SPECS)}
+    kernels.sort(key=lambda k: order.get(engine_slug(k.name), len(order)))
     browsers = await _browsers_of(session, [k.id for k in kernels])
     images, docker_ok, docker_error = await _load_images()
     scanned_at = _now()
@@ -175,7 +176,6 @@ async def payload(session: AsyncSession) -> KernelPayload:
                 detection_level=kernel.detection_level,
                 repo_url=kernel.repo_url,
                 mirror_url=kernel.mirror_url,
-                is_primary=kernel.is_primary,
                 registry=kernel_scan.registry(),
                 supported=supported,
                 unsupported_reason=reason,
@@ -469,45 +469,3 @@ async def instances(
             )
         )
     return items
-
-
-async def set_primary(
-    session: AsyncSession,
-    kernel_id: str,
-    *,
-    operator: str,
-    request: Request | None = None,
-) -> PrimaryResponse:
-    """设为主力内核：新建实例时默认选中它。"""
-    kernel = await _get_kernel(session, kernel_id)
-    if kernel.status is KernelStatus.deprecated:
-        return PrimaryResponse(
-            ok=False,
-            primary_id="",
-            message=f"{kernel.name} 已弃用，不能设为主力内核",
-        )
-
-    for other in (await session.scalars(select(Kernel))).all():
-        if other.is_primary and other.id != kernel.id:
-            other.is_primary = False
-    kernel.is_primary = True
-    await session.flush()
-
-    await audit.record(
-        session,
-        action=AuditAction.update,
-        resource_type=AuditResourceType.kernel,
-        resource_id=kernel.id,
-        resource_name=kernel.name,
-        operator=operator,
-        detail=f"{kernel.name} 设为主力内核",
-        changes={"is_primary": {"before": False, "after": True}},
-        request=request,
-    )
-    await session.commit()
-
-    return PrimaryResponse(
-        ok=True,
-        primary_id=str(kernel.id),
-        message=f"{kernel.name} 已设为主力内核，新建实例默认使用该引擎",
-    )

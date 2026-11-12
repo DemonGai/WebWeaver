@@ -19,7 +19,6 @@ from app.schemas.kernels import (
     KernelPayload,
     MigrationRequest,
     MigrationResult,
-    PrimaryResponse,
     VersionSwitchRequest,
 )
 from app.services import audit, kernel_install, kernel_pool
@@ -167,26 +166,6 @@ async def migrate_kernel_version(
         kernel_id,
         payload.version,
         payload.browser_ids,
-        operator=user.username,
-        request=request,
-    )
-
-
-@router.post(
-    "/kernels/{kernel_id}/primary",
-    response_model=PrimaryResponse,
-    summary="设为主力内核",
-    dependencies=[Depends(require_permission("kernel:update"))],
-)
-async def set_primary(
-    kernel_id: str,
-    request: Request,
-    user: CurrentUser,
-    session: SessionDep,
-) -> PrimaryResponse:
-    return await kernel_pool.set_primary(
-        session,
-        kernel_id,
         operator=user.username,
         request=request,
     )

@@ -20,7 +20,6 @@ import {
   IconKernel,
   IconMonitor,
   IconRefresh,
-  IconStarFilled,
   IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
@@ -168,20 +167,6 @@ export default function KernelDetailPage() {
     }
   }
 
-  const makePrimary = async () => {
-    if (card.is_primary) return
-    setBusy('primary')
-    try {
-      const res = await endpoints.setPrimaryKernel(card.id)
-      refresh()
-      notify(res.ok ? 'ok' : 'err', res.message)
-    } catch (err) {
-      notify('err', err instanceof Error ? err.message : '设置主力内核失败')
-    } finally {
-      setBusy('')
-    }
-  }
-
   return (
     <PageShell>
       <div className="flex items-center gap-2 text-[12px] text-[var(--ink-400)]">
@@ -196,7 +181,7 @@ export default function KernelDetailPage() {
         <span className="text-[var(--ink-700)]">{card.name}</span>
       </div>
 
-      <Hero card={card} onPrimary={makePrimary} busy={busy === 'primary'} />
+      <Hero card={card} />
 
       {toast && (
         <div
@@ -401,15 +386,7 @@ function CardTitle({
   )
 }
 
-function Hero({
-  card,
-  onPrimary,
-  busy,
-}: {
-  card: KernelCard
-  onPrimary: () => void
-  busy: boolean
-}) {
+function Hero({ card }: { card: KernelCard }) {
   return (
     <div className="mt-3 flex items-start justify-between gap-5 rounded-2xl border border-[var(--line)] bg-white p-5">
       <div className="flex min-w-0 items-start gap-3.5">
@@ -425,12 +402,6 @@ function Hero({
             <h1 className="text-[20px] leading-tight font-semibold tracking-tight text-[var(--ink-900)]">
               {card.name}
             </h1>
-            {card.is_primary && (
-              <span className="chip bg-[#18181b] px-1.5 text-[10px] text-white">
-                <IconStarFilled size={9} />
-                主力
-              </span>
-            )}
             <span className="chip border border-[var(--line)] bg-white text-[10px] text-[var(--ink-500)]">
               {card.engine}
             </span>
@@ -463,15 +434,6 @@ function Hero({
               <IconArrowUpRight size={11} />
             </a>
           )}
-          <button
-            type="button"
-            onClick={onPrimary}
-            disabled={card.is_primary || busy || !card.supported}
-            className="btn-ghost !h-7 !px-3 !text-[11.5px] disabled:cursor-default disabled:opacity-50"
-          >
-            <IconStarFilled size={11} />
-            {card.is_primary ? '当前主力' : '设为主力'}
-          </button>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-[var(--ink-400)]">
           <span className="tnum">

@@ -24,7 +24,6 @@ import type {
   KernelInstance,
   KernelMigrationResult,
   KernelPayload,
-  PrimaryResponse,
   NoVncPayload,
   OverviewPayload,
   OverviewRange,
@@ -60,7 +59,6 @@ export const endpoints = {
   /* 内核管理 */
   kernels: () => api.get<KernelPayload>('/kernels'),
   rescanKernels: () => api.post<KernelPayload>('/kernels/rescan', {}),
-  setPrimaryKernel: (id: string) => api.post<PrimaryResponse>(`/kernels/${id}/primary`, {}),
   // 切当前版本：旧版本目录保留，老实例仍留在旧版本上
   switchKernelVersion: (id: string, version: string) =>
     api.post<KernelPayload>(`/kernels/${id}/version`, { version }),

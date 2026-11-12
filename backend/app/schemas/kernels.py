@@ -48,7 +48,6 @@ class KernelCard(BaseModel):
     detection_level: str | None = None
     repo_url: str | None = None
     mirror_url: str | None = None
-    is_primary: bool = False
 
     # 镜像维度
     registry: str = ""
@@ -116,12 +115,6 @@ class MigrationResult(BaseModel):
     ok: bool
     version: str
     migrated: int
-    message: str
-
-
-class PrimaryResponse(BaseModel):
-    ok: bool
-    primary_id: str
     message: str
 
 

@@ -232,7 +232,7 @@ export interface NoVncPayload {
   logs: { time: string; action: string; kind: string; detail: string; result: string }[]
 }
 
-/* ── 指纹库 ───────────────────────────────────────────── */
+/* ── 指纹管理 ─────────────────────────────────────────── */
 /** 与后端 ``PlatformFamily`` 枚举一一对应，多一个都会在渲染时取不到样式。
  *  「移动」只是筛选分组，不是平台族本身：android / ios 都算移动。 */
 export type PlatformFamily = 'windows' | 'macos' | 'linux' | 'android' | 'ios'

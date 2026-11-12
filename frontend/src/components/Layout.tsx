@@ -17,7 +17,7 @@ const NAV = [
   { to: '/browsers', label: '浏览器池', icon: IconBrowser },
   { to: '/accounts', label: '账号池', icon: IconUser },
   { to: '/ip-pool', label: 'IP 池', icon: IconGlobe },
-  { to: '/fingerprints', label: '指纹库', icon: IconFingerprint },
+  { to: '/fingerprints', label: '指纹管理', icon: IconFingerprint },
   { to: '/kernels', label: '内核管理', icon: IconKernel },
 ]
 
@@ -87,21 +87,31 @@ export function Header() {
 }
 
 export function PageHeader({
+  icon,
   title,
   subtitle,
   actions,
 }: {
+  /** 给了就渲染「墨色圆角块 + 图标」，规格与内核管理页同款 */
+  icon?: ReactNode
   title: string
   subtitle?: string
   actions?: ReactNode
 }) {
   return (
-    <div className="mb-5 flex items-end justify-between gap-4">
-      <div>
-        <h1 className="text-[26px] leading-tight font-semibold tracking-tight text-[var(--ink-900)]">
-          {title}
-        </h1>
-        {subtitle && <p className="mt-1.5 text-[12.5px] text-[var(--ink-500)]">{subtitle}</p>}
+    <div className={`mb-5 flex justify-between gap-4 ${icon ? 'items-center' : 'items-end'}`}>
+      <div className="flex items-center gap-3">
+        {icon && (
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#18181b] text-white shadow-[0_1px_2px_rgba(24,24,27,0.24)]">
+            {icon}
+          </span>
+        )}
+        <div>
+          <h1 className="text-[26px] leading-tight font-semibold tracking-tight text-[var(--ink-900)]">
+            {title}
+          </h1>
+          {subtitle && <p className="mt-1.5 text-[12.5px] text-[var(--ink-500)]">{subtitle}</p>}
+        </div>
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>

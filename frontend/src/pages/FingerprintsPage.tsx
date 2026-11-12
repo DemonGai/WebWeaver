@@ -170,7 +170,8 @@ export default function FingerprintsPage() {
   return (
     <PageShell>
       <PageHeader
-        title="指纹池"
+        icon={<IconFingerprint size={19} />}
+        title="指纹管理"
         subtitle="一条指纹 = 一个种子。种子决定整套人格，UA / 分辨率和显卡都是它算出来的结果"
         actions={
           <button

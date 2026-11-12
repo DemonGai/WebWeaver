@@ -82,7 +82,7 @@ export const endpoints = {
     api.post<InstallJob>(`/kernels/${slug}/install`, body),
   installJobs: () => api.get<InstallJob[]>('/kernels/jobs'),
 
-  /* 指纹池写操作 */
+  /* 指纹管理写操作 */
   fingerprintCapabilities: () =>
     api.get<KernelFingerprintCaps[]>('/fingerprints/capabilities'),
   fingerprintOptions: () =>

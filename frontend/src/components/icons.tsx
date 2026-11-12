@@ -304,7 +304,7 @@ export const IconKernel = make(
   </>,
 )
 
-/* ── 平台标识（指纹库列表用，实心小字形） ─────────────── */
+/* ── 平台标识（指纹管理列表用，实心小字形） ───────────── */
 export function IconWindows({ size = 16, ...rest }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none" {...rest}>

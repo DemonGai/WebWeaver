@@ -5,6 +5,7 @@ import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
 import { PageShell } from '@/components/Layout'
 import { Card, ProgressBar } from '@/components/ui'
+import { StatTile, toneTile } from '@/components/StatTile'
 import { KernelMigrateDialog } from '@/components/KernelMigrateDialog'
 import { KernelScanDialog } from '@/components/KernelScanDialog'
 import {
@@ -28,19 +29,8 @@ import type {
   InstallJob,
   KernelCard,
   KernelPayload,
-  KernelStat,
   KernelVersion,
 } from '@/types/domain'
-
-const toneTile: Record<string, string> = {
-  blue: 'bg-blue-50 text-blue-600',
-  amber: 'bg-amber-50 text-amber-600',
-  violet: 'bg-violet-50 text-violet-600',
-  emerald: 'bg-emerald-50 text-emerald-600',
-  zinc: 'bg-zinc-100 text-zinc-500',
-  sky: 'bg-sky-50 text-sky-600',
-  dark: 'bg-[#18181b] text-white',
-}
 
 const statIcon: Record<string, ReactNode> = {
   layers: <IconLayers size={15} />,
@@ -263,7 +253,14 @@ export default function KernelsPage() {
       {/* 统计条 */}
       <div className="mt-4 grid grid-cols-4 gap-4">
         {data.stats.map((stat) => (
-          <StatTile key={stat.key} stat={stat} />
+          <StatTile
+            key={stat.key}
+            label={stat.label}
+            value={stat.value}
+            hint={stat.hint}
+            tone={stat.tone}
+            icon={statIcon[stat.icon] ?? <IconKernel size={15} />}
+          />
         ))}
       </div>
 
@@ -309,28 +306,6 @@ export default function KernelsPage() {
 
       <KernelScanDialog result={scanResult} onClose={() => setScanResult(null)} />
     </PageShell>
-  )
-}
-
-function StatTile({ stat }: { stat: KernelStat }) {
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-white px-4 py-3.5">
-      <span
-        className={`flex size-8 shrink-0 items-center justify-center rounded-[10px] ${toneTile[stat.tone] ?? toneTile.dark
-          }`}
-      >
-        {statIcon[stat.icon] ?? <IconKernel size={15} />}
-      </span>
-      <div className="min-w-0">
-        <div className="text-[10.5px] text-[var(--ink-400)]">{stat.label}</div>
-        <div className="mt-1 flex items-baseline gap-2">
-          <span className="tnum text-[19px] leading-none font-semibold text-[var(--ink-900)]">
-            {stat.value}
-          </span>
-          <span className="truncate text-[10.5px] text-[var(--ink-400)]">{stat.hint}</span>
-        </div>
-      </div>
-    </div>
   )
 }
 

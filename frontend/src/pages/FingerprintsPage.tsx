@@ -4,6 +4,7 @@ import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
 import { PageHeader, PageShell } from '@/components/Layout'
 import { Card, PillTabs, SearchInput } from '@/components/ui'
+import { StatTile } from '@/components/StatTile'
 import { SelectMenu } from '@/components/SelectMenu'
 import { Modal } from '@/components/Modal'
 import { FingerprintDialog } from '@/components/FingerprintDialog'
@@ -15,6 +16,7 @@ import {
   IconCheckCircle,
   IconCpu,
   IconFingerprint,
+  IconKernel,
   IconMonitor,
   IconPlus,
   IconRefresh,
@@ -199,20 +201,35 @@ export default function FingerprintsPage() {
         </div>
       )}
 
-      {/* 统计条 */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="指纹总数" value={String(data.total)} hint="含暂不可下发的" />
-        <Stat
+      {/* 统计条：与内核管理同一套 StatTile（左图标 + 右数值/hint） */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatTile
+          label="指纹总数"
+          value={String(data.total)}
+          hint="含暂不可下发的"
+          tone="dark"
+          icon={<IconFingerprint size={15} />}
+        />
+        <StatTile
           label="支持指纹的内核"
           value={`${data.supported_kernels}/${data.kernels}`}
           hint="带指纹补丁的内核数量"
+          tone="blue"
+          icon={<IconKernel size={15} />}
         />
-        <Stat label="已采集" value={String(data.probed)} hint="读回过真实人格" tone="emerald" />
-        <Stat
+        <StatTile
+          label="已采集"
+          value={String(data.probed)}
+          hint="读回过真实人格"
+          tone="emerald"
+          icon={<IconCheckCircle size={15} />}
+        />
+        <StatTile
           label="待重采"
           value={String(data.stale)}
           hint="参数改过，实测值过期"
           tone={data.stale > 0 ? 'amber' : 'zinc'}
+          icon={<IconRefresh size={15} />}
         />
       </div>
 
@@ -348,32 +365,6 @@ export default function FingerprintsPage() {
         </p>
       </Modal>
     </PageShell>
-  )
-}
-
-function Stat({
-  label,
-  value,
-  hint,
-  tone = 'zinc',
-}: {
-  label: string
-  value: string
-  hint: string
-  tone?: 'zinc' | 'emerald' | 'amber'
-}) {
-  const valueStyle =
-    tone === 'emerald'
-      ? 'text-emerald-600'
-      : tone === 'amber'
-        ? 'text-amber-600'
-        : 'text-[var(--ink-900)]'
-  return (
-    <Card className="px-4 py-3">
-      <p className="text-[11px] text-[var(--ink-400)]">{label}</p>
-      <p className={`mt-1 text-[19px] font-semibold tnum ${valueStyle}`}>{value}</p>
-      <p className="mt-0.5 text-[10.5px] text-[var(--ink-400)]">{hint}</p>
-    </Card>
   )
 }
 

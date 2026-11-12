@@ -43,6 +43,15 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Edge 会在 type=password 的输入框里塞一个自己的「显示密码」眼睛
+   （::-ms-reveal 那个 UA 影子控件）。它只在用户真敲了字之后才冒出来，
+   正好叠在页面自己的按钮上，看起来像两个眼睛。
+   统一藏掉浏览器那个：显示 / 隐藏由页面按钮负责，状态也归我们管。 */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}
+
 /* ── 复用类 ───────────────────────────────────────────── */
 @layer components {
   .card {

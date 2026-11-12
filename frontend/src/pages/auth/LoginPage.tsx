@@ -3,8 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { useAuth } from '@/auth/AuthProvider'
 import { AuthShell, AuthTitle } from '@/components/AuthShell'
-import { Field, IconInput } from '@/components/fields'
-import { IconAlert, IconArrowRight, IconEye, IconEyeOff, IconLock, IconUser } from '@/components/icons'
+import { Field, IconInput, PasswordInput } from '@/components/fields'
+import { IconAlert, IconArrowRight, IconLock, IconUser } from '@/components/icons'
 
 /**
  * 登录页。
@@ -23,7 +23,6 @@ export default function LoginPage() {
   const [account, setAccount] = useState('admin')
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
-  const [visible, setVisible] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -50,7 +49,7 @@ export default function LoginPage() {
 
   return (
     <AuthShell bottom="WebWeaver 浏览器集群 · 账号安全中心">
-      <AuthTitle title="登录 WebWeaver" subtitle="使用成员账号进入浏览器集群控制台" />
+      <AuthTitle title="登录" subtitle="使用成员账号进入浏览器集群控制台" />
 
       <form onSubmit={submit} className="mt-6 space-y-4">
         <Field label="账号" htmlFor="account">
@@ -65,25 +64,14 @@ export default function LoginPage() {
         </Field>
 
         <Field label="密码" htmlFor="password">
-          <div className="relative">
-            <IconInput
-              id="password"
-              type={visible ? 'text' : 'password'}
-              autoComplete="current-password"
-              icon={<IconLock size={14} />}
-              placeholder="请输入密码"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <button
-              type="button"
-              aria-label={visible ? '隐藏密码' : '显示密码'}
-              onClick={() => setVisible((v) => !v)}
-              className="absolute top-1/2 right-3 -translate-y-1/2 text-[var(--ink-400)] transition-colors hover:text-[var(--ink-600)]"
-            >
-              {visible ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-            </button>
-          </div>
+          <PasswordInput
+            id="password"
+            autoComplete="current-password"
+            icon={<IconLock size={14} />}
+            placeholder="请输入密码"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
         </Field>
 
         <label className="flex items-center gap-2 text-[11.5px] text-[var(--ink-500)]">
@@ -93,7 +81,7 @@ export default function LoginPage() {
             onChange={(e) => setRemember(e.target.checked)}
             className="size-3.5 rounded border-[var(--line)]"
           />
-          记住我（30 天内免登录）
+          记住我(30 天内免登)
         </label>
 
         {error && (
@@ -115,7 +103,6 @@ export default function LoginPage() {
         <Link to="/forgot-password" className="font-medium text-blue-600 hover:underline">
           忘记密码？
         </Link>
-        <span className="text-[var(--ink-400)]">需要账号请联系工作区管理员</span>
       </div>
     </AuthShell>
   )

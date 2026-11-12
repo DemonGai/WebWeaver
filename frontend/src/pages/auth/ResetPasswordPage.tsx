@@ -2,15 +2,8 @@ import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { AuthShell, AuthTitle } from '@/components/AuthShell'
-import { Field, IconInput } from '@/components/fields'
-import {
-  IconAlert,
-  IconCheck,
-  IconEye,
-  IconEyeOff,
-  IconLock,
-  IconShield,
-} from '@/components/icons'
+import { Field, PasswordInput } from '@/components/fields'
+import { IconAlert, IconCheck, IconLock, IconShield } from '@/components/icons'
 
 interface Check {
   key: string
@@ -56,7 +49,6 @@ export default function ResetPasswordPage() {
 
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [visible, setVisible] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState<{ revoked: number } | null>(null)
@@ -155,24 +147,13 @@ export default function ResetPasswordPage() {
 
       <form onSubmit={submit} className="mt-6 space-y-4">
         <Field label="新密码" htmlFor="password">
-          <IconInput
+          <PasswordInput
             id="password"
-            type={visible ? 'text' : 'password'}
             icon={<IconLock size={14} />}
             placeholder="请输入新密码"
             value={password}
             autoComplete="new-password"
             onChange={(e) => setPassword(e.target.value)}
-            trailing={
-              <button
-                type="button"
-                onClick={() => setVisible((v) => !v)}
-                className="text-[var(--ink-400)] transition-colors hover:text-[var(--ink-700)]"
-                aria-label={visible ? '隐藏密码' : '显示密码'}
-              >
-                {visible ? <IconEyeOff size={15} /> : <IconEye size={15} />}
-              </button>
-            }
           />
           {password.length > 0 && (
             <div className="!mt-2.5 flex items-center gap-2">
@@ -194,9 +175,8 @@ export default function ResetPasswordPage() {
         </Field>
 
         <Field label="确认新密码" htmlFor="confirm">
-          <IconInput
+          <PasswordInput
             id="confirm"
-            type={visible ? 'text' : 'password'}
             icon={<IconLock size={14} />}
             placeholder="再次输入新密码"
             value={confirm}

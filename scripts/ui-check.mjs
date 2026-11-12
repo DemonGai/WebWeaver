@@ -233,6 +233,16 @@ async function main() {
   )
   await shot('11-reset-invalid')
 
+  console.log('\n⑪b 重置密码表单本身（假令牌只为把表单渲染出来）')
+  await goto(`${BASE}/reset-password?token=layout-only&email=someone@example.com`)
+  const eyeCount = await evaluate(
+    "[...document.querySelectorAll('input')].filter(i => i.type === 'password').length",
+  )
+  console.log(`  密码框 ${eyeCount} 个，页面上「显示密码」按钮 ${await evaluate(
+    "document.querySelectorAll('button[aria-label=\"显示密码\"]').length",
+  )} 个`)
+  await shot('11b-reset-form')
+
   // 真的走一遍重置：调用方先申请令牌，通过 UI_RESET_TOKEN 传进来
   const resetToken = process.env.UI_RESET_TOKEN
   if (resetToken) {

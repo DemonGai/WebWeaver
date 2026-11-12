@@ -11,7 +11,7 @@
 import { useState } from 'react'
 import { endpoints } from '@/api/endpoints'
 import { useAuth } from '@/auth/AuthProvider'
-import { Field, IconInput } from '@/components/fields'
+import { Field, PasswordInput } from '@/components/fields'
 import { IconAlert, IconCheckCircle, IconLock } from '@/components/icons'
 import { Modal } from '@/components/Modal'
 import type { PasswordRule } from '@/types/domain'
@@ -113,9 +113,8 @@ export function ChangePasswordDialog({
       ) : (
         <form id="change-password-form" onSubmit={submit} className="space-y-3 px-6 pb-2">
           <Field label="当前密码" htmlFor="current-password">
-            <IconInput
+            <PasswordInput
               id="current-password"
-              type="password"
               icon={<IconLock size={14} />}
               autoComplete="current-password"
               value={current}
@@ -125,9 +124,8 @@ export function ChangePasswordDialog({
           </Field>
 
           <Field label="新密码" htmlFor="new-password">
-            <IconInput
+            <PasswordInput
               id="new-password"
-              type="password"
               icon={<IconLock size={14} />}
               autoComplete="new-password"
               value={password}
@@ -137,9 +135,8 @@ export function ChangePasswordDialog({
           </Field>
 
           <Field label="确认新密码" htmlFor="confirm-password">
-            <IconInput
+            <PasswordInput
               id="confirm-password"
-              type="password"
               icon={<IconLock size={14} />}
               autoComplete="new-password"
               value={confirm}

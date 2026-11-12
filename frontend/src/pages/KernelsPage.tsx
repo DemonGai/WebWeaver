@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
@@ -18,7 +19,6 @@ import {
   IconLayers,
   IconMonitor,
   IconRefresh,
-  IconStarFilled,
   IconTrend,
   IconX,
 } from '@/components/icons'
@@ -48,7 +48,8 @@ export default function KernelsPage() {
   const { data, status, error, reload, refresh } = useApi(endpoints.kernels, [])
   const [busy, setBusy] = useState('')
   const [toast, setToast] = useState<Toast>(null)
-  const [expanded, setExpanded] = useState<string[]>([])
+  /** 版本浮层：记住是哪张卡、锚在哪个按钮上 */
+  const [versions, setVersions] = useState<{ id: string; anchor: HTMLElement } | null>(null)
   const [migrating, setMigrating] = useState<KernelCard | null>(null)
   const [job, setJob] = useState<InstallJob | null>(null)
 
@@ -123,19 +124,12 @@ export default function KernelsPage() {
     }
   }
 
-  const makePrimary = async (card: KernelCard) => {
-    if (card.is_primary) return
-    setBusy(card.id)
-    try {
-      const res = await endpoints.setPrimaryKernel(card.id)
-      refresh()
-      notify(res.ok ? 'ok' : 'err', res.message)
-    } catch (err) {
-      notify('err', err instanceof Error ? err.message : '设置主力内核失败')
-    } finally {
-      setBusy('')
-    }
-  }
+  const toggleVersions = useCallback((id: string, anchor: HTMLButtonElement | null) => {
+    if (!anchor) return
+    setVersions((prev) => (prev?.id === id ? null : { id, anchor }))
+  }, [])
+
+  const closeVersions = useCallback(() => setVersions(null), [])
 
   if (status === 'loading') {
     return (
@@ -152,12 +146,8 @@ export default function KernelsPage() {
     )
   }
 
-  const toggle = (id: string) =>
-    setExpanded((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
-
-  const supported = data.cards.filter((c) => c.supported)
-  const upgradeable = supported.filter((c) => c.update_available).length
-  const missing = supported.filter((c) => !c.installed).length
+  // 版本浮层要跟着数据走：refresh 之后卡片是新对象，靠 id 现取，避免拿到旧数据
+  const versionsCard = versions ? (data.cards.find((c) => c.id === versions.id) ?? null) : null
 
   return (
     <PageShell>
@@ -165,28 +155,9 @@ export default function KernelsPage() {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-[26px] leading-tight font-semibold tracking-tight text-[var(--ink-900)]">
-              浏览器内核管理
+              内核管理
             </h1>
-            {missing > 0 ? (
-              <span className="chip bg-zinc-100 text-[11px] text-zinc-600">
-                <IconAlert size={11} />
-                {missing} 个内核未获取
-              </span>
-            ) : upgradeable > 0 ? (
-              <span className="chip bg-blue-50 text-[11px] text-blue-600">
-                <IconArrowUpRight size={11} />
-                {upgradeable} 个内核有新版本
-              </span>
-            ) : (
-              <span className="chip bg-emerald-50 text-[11px] text-emerald-600">
-                <IconCheckCircle size={11} />
-                镜像全部就绪
-              </span>
-            )}
           </div>
-          <p className="mt-1.5 text-[12.5px] text-[var(--ink-500)]">
-            四套引擎固定；本地有镜像就算可用，点「获取内核」直接 docker pull
-          </p>
         </div>
         <button
           type="button"
@@ -213,9 +184,8 @@ export default function KernelsPage() {
 
       {toast && (
         <div
-          className={`mt-3 flex items-start gap-2 rounded-xl px-4 py-2.5 text-[12px] ${
-            toast.tone === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'
-          }`}
+          className={`mt-3 flex items-start gap-2 rounded-xl px-4 py-2.5 text-[12px] ${toast.tone === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'
+            }`}
         >
           <span className="mt-[1px] shrink-0">
             {toast.tone === 'ok' ? <IconCheckCircle size={13} /> : <IconAlert size={13} />}
@@ -231,13 +201,12 @@ export default function KernelsPage() {
         <div className="mt-3 rounded-2xl border border-[var(--line)] bg-white px-4 py-3">
           <div className="flex items-center gap-2 text-[12px]">
             <span
-              className={`flex size-6 shrink-0 items-center justify-center rounded-full ${
-                job.status === 'success'
-                  ? 'bg-emerald-50 text-emerald-600'
-                  : job.status === 'failed'
-                    ? 'bg-rose-50 text-rose-600'
-                    : 'bg-blue-50 text-blue-600'
-              }`}
+              className={`flex size-6 shrink-0 items-center justify-center rounded-full ${job.status === 'success'
+                ? 'bg-emerald-50 text-emerald-600'
+                : job.status === 'failed'
+                  ? 'bg-rose-50 text-rose-600'
+                  : 'bg-blue-50 text-blue-600'
+                }`}
             >
               {job.status === 'success' ? (
                 <IconCheckCircle size={12} />
@@ -281,23 +250,32 @@ export default function KernelsPage() {
         ))}
       </div>
 
-      {/* 四张引擎卡 */}
+      {/* 四张引擎卡：等高等宽，版本明细走浮层，不参与网格排版 */}
       <div className="mt-4 grid grid-cols-2 gap-4">
         {data.cards.map((card) => (
           <KernelCardView
             key={card.id}
             card={card}
             busy={busy === card.id}
-            expanded={expanded.includes(card.id)}
+            versionsOpen={versions?.id === card.id}
             pulling={job?.status === 'running' && job.slug === card.slug}
-            onToggle={() => toggle(card.id)}
+            onToggleVersions={(anchor) => toggleVersions(card.id, anchor)}
             onActivate={(version) => activate(card, version)}
             onPull={() => pull(card)}
             onMigrate={() => setMigrating(card)}
-            onPrimary={() => makePrimary(card)}
           />
         ))}
       </div>
+
+      {versions && versionsCard && (
+        <VersionPopover
+          card={versionsCard}
+          anchor={versions.anchor}
+          busy={busy === versionsCard.id}
+          onClose={closeVersions}
+          onActivate={(version) => activate(versionsCard, version)}
+        />
+      )}
 
       <KernelMigrateDialog
         card={migrating}
@@ -316,9 +294,8 @@ function StatTile({ stat }: { stat: KernelStat }) {
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-white px-4 py-3.5">
       <span
-        className={`flex size-8 shrink-0 items-center justify-center rounded-[10px] ${
-          toneTile[stat.tone] ?? toneTile.dark
-        }`}
+        className={`flex size-8 shrink-0 items-center justify-center rounded-[10px] ${toneTile[stat.tone] ?? toneTile.dark
+          }`}
       >
         {statIcon[stat.icon] ?? <IconKernel size={15} />}
       </span>
@@ -338,25 +315,24 @@ function StatTile({ stat }: { stat: KernelStat }) {
 function KernelCardView({
   card,
   busy,
-  expanded,
+  versionsOpen,
   pulling,
-  onToggle,
+  onToggleVersions,
   onActivate,
   onPull,
   onMigrate,
-  onPrimary,
 }: {
   card: KernelCard
   busy: boolean
-  expanded: boolean
+  versionsOpen: boolean
   pulling: boolean
-  onToggle: () => void
+  onToggleVersions: (anchor: HTMLButtonElement | null) => void
   onActivate: (version: string) => void
   onPull: () => void
   onMigrate: () => void
-  onPrimary: () => void
 }) {
   const disabled = !card.supported
+  const versionsBtn = useRef<HTMLButtonElement>(null)
 
   return (
     <Card
@@ -365,27 +341,19 @@ function KernelCardView({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
           <span
-            className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${
-              disabled ? 'bg-[#f4f4f5] text-[var(--ink-400)]' : (toneTile[card.tone] ?? toneTile.sky)
-            }`}
+            className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${disabled ? 'bg-[#f4f4f5] text-[var(--ink-400)]' : (toneTile[card.tone] ?? toneTile.sky)
+              }`}
           >
             <IconKernel size={16} />
           </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5">
               <h3
-                className={`text-[14px] font-semibold tracking-tight ${
-                  disabled ? 'text-[var(--ink-500)]' : 'text-[var(--ink-900)]'
-                }`}
+                className={`text-[14px] font-semibold tracking-tight ${disabled ? 'text-[var(--ink-500)]' : 'text-[var(--ink-900)]'
+                  }`}
               >
                 {card.name}
               </h3>
-              {card.is_primary && !disabled && (
-                <span className="chip bg-[#18181b] px-1.5 text-[10px] text-white">
-                  <IconStarFilled size={9} />
-                  主力
-                </span>
-              )}
               <span className="chip border border-[var(--line)] bg-white text-[10px] text-[var(--ink-500)]">
                 {card.engine}
               </span>
@@ -397,13 +365,12 @@ function KernelCardView({
           </div>
         </div>
         <span
-          className={`chip shrink-0 ${
-            disabled
-              ? 'bg-[#f4f4f5] text-[var(--ink-500)]'
-              : card.installed
-                ? 'bg-emerald-50 text-emerald-600'
-                : 'bg-zinc-100 text-zinc-500'
-          }`}
+          className={`chip shrink-0 ${disabled
+            ? 'bg-[#f4f4f5] text-[var(--ink-500)]'
+            : card.installed
+              ? 'bg-emerald-50 text-emerald-600'
+              : 'bg-zinc-100 text-zinc-500'
+            }`}
         >
           <span className="size-[5px] rounded-full bg-current" />
           {disabled
@@ -430,7 +397,7 @@ function KernelCardView({
       </div>
 
       {/* 镜像版本 */}
-      <div className={`mt-3.5 rounded-xl px-3.5 py-3 ${disabled ? 'bg-[#fafafa]' : 'bg-[#fafafa]'}`}>
+      <div className="mt-3.5 rounded-xl bg-[#fafafa] px-3.5 py-3">
         {disabled ? (
           <div className="py-2 text-center">
             <p className="text-[12px] font-medium text-[var(--ink-500)]">暂未支持，敬请期待</p>
@@ -440,27 +407,18 @@ function KernelCardView({
           </div>
         ) : (
           <>
-            <div className="flex items-end justify-between gap-3">
-              <div>
-                <div className="text-[10.5px] text-[var(--ink-400)]">当前版本</div>
-                <div className="tnum mt-1 flex items-baseline gap-1.5 text-[17px] leading-none font-semibold">
-                  <span
-                    className={
-                      card.installed ? 'text-[var(--ink-900)]' : 'text-[var(--ink-400)]'
-                    }
-                  >
-                    {card.current_version ?? '—'}
-                  </span>
-                  {!card.installed && (
-                    <span className="text-[10px] font-normal text-[var(--ink-400)]">未获取</span>
-                  )}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-[10.5px] text-[var(--ink-400)]">本地最新</div>
-                <div className="tnum mt-1 text-[12px] font-medium text-[var(--ink-700)]">
-                  {card.latest_version ?? '—'}
-                </div>
+            {/* 只留「当前版本」大数字。原来右边还有一列「本地最新」，
+                但三张卡里它和当前版本一模一样，等于同一个数字印两遍；
+                真不同的时候下面那条蓝色提示已经把最新版说清楚了。 */}
+            <div>
+              <div className="text-[10.5px] text-[var(--ink-400)]">当前版本</div>
+              <div className="tnum mt-1 flex items-baseline gap-1.5 text-[17px] leading-none font-semibold">
+                <span className={card.installed ? 'text-[var(--ink-900)]' : 'text-[var(--ink-400)]'}>
+                  {card.current_version ?? '—'}
+                </span>
+                {!card.installed && (
+                  <span className="text-[10px] font-normal text-[var(--ink-400)]">未获取</span>
+                )}
               </div>
             </div>
 
@@ -523,14 +481,21 @@ function KernelCardView({
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-[var(--line)] pt-3">
         {card.version_count > 0 && (
           <button
+            ref={versionsBtn}
             type="button"
-            onClick={onToggle}
-            className="inline-flex h-7 items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 text-[11px] font-medium text-[var(--ink-700)] hover:bg-[#f7f7f8]"
+            aria-haspopup="dialog"
+            aria-expanded={versionsOpen}
+            onClick={() => onToggleVersions(versionsBtn.current)}
+            className={`inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-colors ${
+              versionsOpen
+                ? 'border-[#18181b] bg-[#18181b] text-white'
+                : 'border-[var(--line)] bg-white text-[var(--ink-700)] hover:bg-[#f7f7f8]'
+            }`}
           >
             镜像版本 {card.version_count}
             <IconChevronDown
               size={11}
-              className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
+              className={`transition-transform ${versionsOpen ? 'rotate-180' : ''}`}
             />
           </button>
         )}
@@ -567,65 +532,169 @@ function KernelCardView({
             迁移 {card.stale_count} 台
           </button>
         )}
-        <button
-          type="button"
-          onClick={onPrimary}
-          disabled={card.is_primary || busy || disabled}
-          className={`ml-auto inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] font-medium transition-colors disabled:cursor-default disabled:opacity-50 ${
-            card.is_primary ? 'text-[var(--ink-400)]' : 'text-[var(--ink-700)] hover:bg-[#f4f4f5]'
-          }`}
-        >
-          <IconStarFilled size={11} />
-          {card.is_primary ? '当前主力' : '设为主力'}
-        </button>
         <Link
           to={`/kernels/${card.slug}`}
-          className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] font-medium text-[var(--ink-700)] transition-colors hover:bg-[#f4f4f5]"
+          className="ml-auto inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] font-medium text-[var(--ink-700)] transition-colors hover:bg-[#f4f4f5]"
         >
           详情
           <IconArrowRight size={11} />
         </Link>
       </div>
+    </Card>
+  )
+}
 
-      {expanded && (
-        <div className="mt-3 overflow-hidden rounded-xl border border-[var(--line)]">
-          {card.versions.length === 0 ? (
-            <div className="py-8 text-center text-[11.5px] text-[var(--ink-400)]">
-              本地还没有这个内核的镜像
-            </div>
-          ) : (
-            <table className="w-full table-fixed">
-              <colgroup>
-                <col className="w-[42%]" />
-                <col className="w-[14%]" />
-                <col className="w-[20%]" />
-                <col className="w-[9%]" />
-                <col className="w-[15%]" />
-              </colgroup>
-              <thead>
-                <tr className="border-b border-[var(--line)] bg-[#fcfcfd]">
-                  <th className="table-th !py-2 !pl-3.5">版本 / 镜像 tag</th>
-                  <th className="table-th !py-2">大小</th>
-                  <th className="table-th !py-2">构建时间</th>
-                  <th className="table-th !py-2">实例</th>
-                  <th className="table-th !py-2 !pr-3.5 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {card.versions.map((version) => (
-                  <VersionRow
-                    key={version.image_ref}
-                    item={version}
-                    busy={busy}
-                    onActivate={() => onActivate(version.version)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          )}
+/**
+ * 镜像版本浮层。
+ *
+ * 为什么不做成行内展开：四张卡在 `grid-cols-2` 里，网格项默认 `stretch`，
+ * 一张长高整行都跟着长——旁边那张没有版本表的卡被拉到同样高度，中间空出
+ * 一大块。浮层不占布局，四张卡永远等高等宽。
+ *
+ * 为什么不用 hover 打开：面板里有「设为当前」要点击，鼠标从按钮移过去的
+ * 途中偏出面板就关了，很难点中；触屏也没有 hover。所以是点开、点外面或
+ * Esc 关，按钮本身给 `aria-expanded`。
+ *
+ * 用 fixed + portal 挂到 body：卡片容器都没有 `overflow:hidden`，但浮层要
+ * 盖住相邻卡片和页头，挂到 body 上就不用跟各层 z-index 打架，也不会被
+ * 将来的滚动容器裁掉。位置在每次滚动 / 缩放时按锚点重新算，空间不够就
+ * 翻到按钮上方。
+ */
+function VersionPopover({
+  card,
+  anchor,
+  busy,
+  onClose,
+  onActivate,
+}: {
+  card: KernelCard
+  anchor: HTMLElement
+  busy: boolean
+  onClose: () => void
+  onActivate: (version: string) => void
+}) {
+  const panel = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState<{ top: number; left: number; width: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const place = () => {
+      const el = panel.current
+      if (!el) return
+      const a = anchor.getBoundingClientRect()
+      const gap = 8
+      const margin = 12
+      const width = Math.min(560, window.innerWidth - margin * 2)
+      const height = el.offsetHeight
+      const left = Math.min(Math.max(margin, a.left), window.innerWidth - width - margin)
+      let top = a.bottom + gap
+      if (top + height > window.innerHeight - margin) {
+        const above = a.top - height - gap
+        top = above >= margin ? above : Math.max(margin, window.innerHeight - height - margin)
+      }
+      setBox({ top, left, width })
+    }
+    place()
+    // capture：页面里任何一层滚动都要跟着重算
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [anchor])
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node
+      // 点按钮自己交回给 toggle，否则会「关了又立刻开」
+      if (panel.current?.contains(target) || anchor.contains(target)) return
+      onClose()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [anchor, onClose])
+
+  return createPortal(
+    <div
+      ref={panel}
+      role="dialog"
+      aria-label={`${card.name} 的镜像版本`}
+      style={{
+        top: box?.top ?? -9999,
+        left: box?.left ?? -9999,
+        width: box?.width ?? 560,
+        visibility: box ? 'visible' : 'hidden',
+      }}
+      className="fixed z-[80] overflow-hidden rounded-2xl border border-[var(--line)] bg-white shadow-[0_4px_12px_rgba(16,24,40,0.06),0_20px_48px_-12px_rgba(16,24,40,0.28)]"
+    >
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-2.5">
+        <div className="min-w-0">
+          <div className="text-[12.5px] font-semibold text-[var(--ink-900)]">镜像版本</div>
+          <div className="mt-0.5 truncate text-[10.5px] text-[var(--ink-400)]">
+            {card.name} · 本地 {card.versions.length} 个
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="关闭"
+          className="flex size-6 shrink-0 items-center justify-center rounded-full text-[var(--ink-400)] transition-colors hover:bg-[#f4f4f5] hover:text-[var(--ink-700)]"
+        >
+          <IconX size={12} />
+        </button>
+      </div>
+
+      {card.versions.length === 0 ? (
+        <div className="py-10 text-center text-[11.5px] text-[var(--ink-400)]">
+          本地还没有这个内核的镜像
+        </div>
+      ) : (
+        <div className="max-h-[340px] overflow-y-auto">
+          <table className="w-full table-fixed">
+            <colgroup>
+              <col className="w-[36%]" />
+              <col className="w-[12%]" />
+              <col className="w-[22%]" />
+              <col className="w-[11%]" />
+              <col className="w-[19%]" />
+            </colgroup>
+            <thead>
+              <tr className="border-b border-[var(--line)] bg-[#fcfcfd]">
+                <th className="table-th sticky top-0 bg-[#fcfcfd] !py-2 !pl-4 whitespace-nowrap">
+                  版本 / 镜像 tag
+                </th>
+                <th className="table-th sticky top-0 bg-[#fcfcfd] !py-2 whitespace-nowrap">大小</th>
+                <th className="table-th sticky top-0 bg-[#fcfcfd] !py-2 whitespace-nowrap">
+                  构建时间
+                </th>
+                <th className="table-th sticky top-0 bg-[#fcfcfd] !py-2 whitespace-nowrap">实例</th>
+                <th className="table-th sticky top-0 bg-[#fcfcfd] !py-2 !pr-4 text-right whitespace-nowrap">
+                  操作
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {card.versions.map((version) => (
+                <VersionRow
+                  key={version.image_ref}
+                  item={version}
+                  busy={busy}
+                  onActivate={() => onActivate(version.version)}
+                />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-    </Card>
+    </div>,
+    document.body,
   )
 }
 
@@ -663,22 +732,30 @@ function VersionRow({
           {item.tag}
         </div>
       </td>
-      <td className="table-td !py-2 tnum text-[11px] text-[var(--ink-700)]">{item.size ?? '—'}</td>
-      <td className="table-td !py-2 tnum text-[11px] text-[var(--ink-500)]">
+      <td className="table-td !py-2 tnum text-[11px] whitespace-nowrap text-[var(--ink-700)]">
+        {item.size ?? '—'}
+      </td>
+      <td className="table-td !py-2 tnum text-[11px] whitespace-nowrap text-[var(--ink-500)]">
         {item.created_at ?? '—'}
       </td>
-      <td className="table-td !py-2 tnum text-[11px] text-[var(--ink-700)]">
+      <td className="table-td !py-2 tnum text-[11px] whitespace-nowrap text-[var(--ink-700)]">
         {item.instances || '—'}
       </td>
       <td className="table-td !py-2 !pr-3.5 text-right">
-        <button
-          type="button"
-          disabled={item.current || busy}
-          onClick={onActivate}
-          className="inline-flex h-6.5 items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 text-[10.5px] font-medium text-[var(--ink-700)] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {item.current ? '使用中' : '设为当前'}
-        </button>
+        {/* 当前版本那行不给按钮：名字后面已经有「当前」标记，
+            再来一个灰掉的「使用中」按钮只是噪音 */}
+        {item.current ? (
+          <span className="text-[10.5px] whitespace-nowrap text-[var(--ink-500)]">使用中</span>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onActivate}
+            className="inline-flex h-6.5 items-center gap-1 rounded-full border border-[var(--line)] bg-white px-2.5 text-[10.5px] font-medium text-[var(--ink-700)] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            设为当前
+          </button>
+        )}
       </td>
     </tr>
   )

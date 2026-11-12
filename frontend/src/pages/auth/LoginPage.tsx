@@ -4,7 +4,8 @@ import { endpoints } from '@/api/endpoints'
 import { useAuth } from '@/auth/AuthProvider'
 import { AuthShell, AuthTitle } from '@/components/AuthShell'
 import { Field, IconInput, PasswordInput } from '@/components/fields'
-import { IconAlert, IconArrowRight, IconLock, IconUser } from '@/components/icons'
+import { IconAlert, IconLock, IconUser } from '@/components/icons'
+import { Checkbox } from '@/components/ui'
 
 /**
  * 登录页。
@@ -50,8 +51,7 @@ export default function LoginPage() {
   return (
     <AuthShell bottom="WebWeaver 浏览器集群 · 账号安全中心">
       <AuthTitle title="登录" subtitle="使用成员账号进入浏览器集群控制台" />
-
-      <form onSubmit={submit} className="mt-6 space-y-4">
+      <form onSubmit={submit} className="mt-6">
         <Field label="账号" htmlFor="account">
           <IconInput
             id="account"
@@ -63,7 +63,7 @@ export default function LoginPage() {
           />
         </Field>
 
-        <Field label="密码" htmlFor="password">
+        <Field label="密码" htmlFor="password" className="mt-4">
           <PasswordInput
             id="password"
             autoComplete="current-password"
@@ -74,36 +74,43 @@ export default function LoginPage() {
           />
         </Field>
 
-        <label className="flex items-center gap-2 text-[11.5px] text-[var(--ink-500)]">
-          <input
-            type="checkbox"
-            checked={remember}
-            onChange={(e) => setRemember(e.target.checked)}
-            className="size-3.5 rounded border-[var(--line)]"
-          />
-          记住我(30 天内免登)
-        </label>
+        {/* 这一行不是表单项，是「密码」的附属选项：跟紧上面，离按钮远一点，
+            否则三块等距排下来会被读成第三个字段。 */}
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="remember"
+              checked={remember}
+              onChange={setRemember}
+              label="记住我（30 天内免登）"
+            />
+            <label
+              htmlFor="remember"
+              className="cursor-pointer text-[11.5px] text-[var(--ink-500)]"
+            >
+              记住我（30 天内免登）
+            </label>
+          </div>
+          <Link
+            to="/forgot-password"
+            className="text-[11.5px] font-medium text-blue-600 hover:underline"
+          >
+            忘记密码？
+          </Link>
+        </div>
 
         {error && (
-          <div className="flex items-start gap-2 rounded-xl bg-rose-50 px-3 py-2.5 text-[11.5px] text-rose-500">
+          <div className="mt-4 flex items-start gap-2 rounded-xl bg-rose-50 px-3 py-2.5 text-[11.5px] text-rose-500">
             <span className="mt-px shrink-0">
               <IconAlert size={12} />
             </span>
             {error}
           </div>
         )}
-
-        <button type="submit" disabled={submitting} className="btn-dark !h-11 w-full !text-[13px]">
+        <button type="submit" disabled={submitting} className="btn-dark mt-5 !h-11 w-full !text-[13px]">
           {submitting ? '登录中…' : '登录'}
-          {!submitting && <IconArrowRight size={14} />}
         </button>
       </form>
-
-      <div className="mt-4 flex items-center justify-between text-[11.5px]">
-        <Link to="/forgot-password" className="font-medium text-blue-600 hover:underline">
-          忘记密码？
-        </Link>
-      </div>
     </AuthShell>
   )
 }

@@ -236,6 +236,7 @@ export function Checkbox({
   indeterminate = false,
   onChange,
   label,
+  id,
   className = '',
 }: {
   checked: boolean
@@ -243,6 +244,8 @@ export function Checkbox({
   indeterminate?: boolean
   onChange: (next: boolean) => void
   label: string
+  /** 让旁边的文字用 htmlFor 关联过来，点文字也能勾选 */
+  id?: string
   className?: string
 }) {
   const ref = useRef<HTMLInputElement>(null)
@@ -259,6 +262,7 @@ export function Checkbox({
     >
       <input
         ref={ref}
+        id={id}
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}

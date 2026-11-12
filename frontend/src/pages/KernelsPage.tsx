@@ -162,12 +162,18 @@ export default function KernelsPage() {
 
   return (
     <PageShell>
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#18181b] text-white shadow-[0_1px_2px_rgba(24,24,27,0.24)]">
+            <IconKernel size={19} />
+          </span>
+          <div>
             <h1 className="text-[26px] leading-tight font-semibold tracking-tight text-[var(--ink-900)]">
               内核管理
             </h1>
+            <p className="mt-1 text-[12.5px] text-[var(--ink-500)]">
+              四种浏览器内核的镜像版本与迁移状态
+            </p>
           </div>
         </div>
         <button

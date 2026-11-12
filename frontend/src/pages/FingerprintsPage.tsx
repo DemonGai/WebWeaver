@@ -172,7 +172,7 @@ export default function FingerprintsPage() {
       <PageHeader
         icon={<IconFingerprint size={19} />}
         title="指纹管理"
-        subtitle="一条指纹 = 一个种子。种子决定整套人格，UA / 分辨率和显卡都是它算出来的结果"
+        subtitle="一条指纹 = 一整套人格，UA / 分辨率 / 显卡都由它派生"
         actions={
           <button
             type="button"

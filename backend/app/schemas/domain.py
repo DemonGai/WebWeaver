@@ -307,6 +307,8 @@ class FingerprintTemplate(BaseModel):
     # 该内核能不能做指纹（ungoogled-chromium / Camoufox 为 False）
     supported: bool = False
     unsupported_reason: str | None = None
+    # 伪移动：内核人格仍是桌面，只有 UA / 视口 / DPR 换成了移动端
+    pseudo_mobile: bool = False
     # 采集结果摘要
     gpu: str | None = None
     canvas_hash: str | None = None
@@ -380,6 +382,10 @@ class FingerprintDetailPayload(BaseModel):
     kernel_slug: str | None = None
     supported: bool = False
     unsupported_reason: str | None = None
+    # 伪移动：内核人格仍是桌面，只有 UA / 视口 / DPR 换成了移动端
+    pseudo_mobile: bool = False
+    # 伪移动的边界说明（给用户看的原话）；真平台时为 None
+    pseudo_mobile_note: str | None = None
     # 该内核的指纹机制一句话说明
     note: str | None = None
 

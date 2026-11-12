@@ -472,7 +472,9 @@ def _consistency_warnings(raw: dict[str, Any]) -> list[str]:
         "macos": ("MacIntel", "Macintosh", "Mac"),
         "linux": ("Linux", "X11"),
         "android": ("Linux", "Android"),
-        "ios": ("iPhone", "iPad", "iOS"),
+        # iPad 从 iPadOS 13 起默认要桌面版站点，navigator.platform 就是 MacIntel，
+        # 配着 iPad 的 UA 是真实的组合，不算矛盾。
+        "ios": ("iPhone", "iPad", "iOS", "MacIntel"),
     }.get(family or "")
     if family and platform and expected and not any(token in platform for token in expected):
         warnings.append(f"UA 说是 {family}，navigator.platform 却是 {platform}，两处对不上")

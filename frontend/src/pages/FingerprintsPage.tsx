@@ -425,7 +425,17 @@ function Row({
       <td className="table-td">
         <div className="text-[12px] text-[var(--ink-900)]">{t.kernel ?? '未绑定'}</div>
         {t.supported ? (
-          <div className="mt-0.5 text-[10.5px] text-emerald-600">可下发</div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+            <span className="text-[10.5px] text-emerald-600">可下发</span>
+            {t.pseudo_mobile && (
+              <span
+                className="rounded bg-amber-50 px-1 py-px text-[10px] font-medium text-amber-600"
+                title="伪移动：UA / 视口 / DPR 按移动端下发，navigator.platform、Client Hints、TLS 仍然是桌面"
+              >
+                伪移动
+              </span>
+            )}
+          </div>
         ) : (
           <div
             className="mt-0.5 line-clamp-2 text-[10.5px] leading-snug text-rose-500"
@@ -438,17 +448,9 @@ function Row({
 
       <td className="table-td">
         {t.probe_state === 'never' ? (
-          <div className="text-[11px] text-[var(--ink-400)]">
-            未采集
-            <button
-              type="button"
-              onClick={onProbe}
-              disabled={probing || !t.supported}
-              className="ml-1 text-[11px] font-medium text-[var(--ink-700)] underline-offset-2 hover:underline disabled:no-underline disabled:opacity-40"
-            >
-              {probing ? '采集中…' : '立即采集'}
-            </button>
-          </div>
+          // 采集入口只留操作列那一个按钮，这里不再放「立即采集」——
+          // 同一行两个同样作用的入口，只会让人犹豫点哪个
+          <div className="text-[12px] text-[var(--ink-300)]">—</div>
         ) : (
           <>
             <div className="truncate text-[12px] text-[var(--ink-900)]" title={t.gpu ?? ''}>

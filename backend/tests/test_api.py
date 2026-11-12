@@ -162,12 +162,13 @@ def test_fingerprints_list(seeded_database: None) -> None:
     # probed 是「读回过人格」的条数，含参数改过之后变 stale 的那些
     assert body["probed"] == len(fresh) + len(stale)
 
-    # 内核支持不代表这条指纹能下发：桌面内核伪装不成 Android，
-    # 要在列表里就标出来，而不是等用户点了才 422。
+    # 内核支持不代表这条指纹能下发：桌面内核装不成手机，移动族走「伪移动」，
+    # 必须在列表里标出来，而不是让用户以为拿到的是真手机。
     # 按平台族找，不绑具体编号——开发库里的 Fingerprint 会被增删
     android = next(t for t in body["templates"] if t["platform_family"] == "android")
-    assert android["supported"] is False
-    assert "Android" in (android["unsupported_reason"] or "")
+    assert android["supported"] is True
+    assert android["pseudo_mobile"] is True
+    assert android["unsupported_reason"] is None
 
     # 8 个实例里 7 个套模板，brw-au-syd-011 走默认指纹（原生指纹），不占模板
     assert sum(t["instances"] for t in body["templates"]) == 7

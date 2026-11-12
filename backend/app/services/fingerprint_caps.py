@@ -32,6 +32,9 @@ from dataclasses import dataclass, field
 # 逻辑能力名。对外一律用这套名字，具体参数名在各自的 arg_templates 里。
 SEED = "seed"
 PLATFORM = "platform"
+# 伪移动标记：内核装不成手机，只能把 UA / 视口 / DPR 换成移动端，
+# platform 与 Client Hints 仍然是桌面。entrypoint 认这个字段做覆盖。
+MOBILE = "mobile"
 PLATFORM_VERSION = "platform_version"
 BRAND = "brand"
 BRAND_VERSION = "brand_version"
@@ -46,11 +49,20 @@ NOISE_TOGGLE = "noise_toggle"
 # 后端不用维护两套生成逻辑。CloakBrowser 的下限就是 10000。
 PORTABLE_SEED_RANGE: tuple[int, int] = (10000, 99999)
 
-# 平台族 → 内核认的平台 token。桌面内核装不了手机，android / ios 直接判不支持。
+# 平台族 → 内核认的平台 token。内核只有三档桌面平台（上游 `--fingerprint-platform`
+# 只认 windows / macos / linux），写 android 会被当成未知值回落成 Linux 桌面人格。
+#
+# 所以移动族走「伪移动」：按最接近的桌面族起底（Android→Linux、iOS→macOS），
+# UA / 视口 / DPR 由 entrypoint 按 `mobile` 字段覆盖。边界写清楚：navigator.platform、
+# Client Hints、TLS（JA3/JA4）仍然是桌面，骗得过只看 UA 的站点，骗不过带风控的。
+MOBILE_FAMILIES: frozenset[str] = frozenset({"android", "ios"})
+
 _PLATFORM_TOKENS: dict[str, str] = {
     "windows": "windows",
     "macos": "macos",
     "linux": "linux",
+    "android": "linux",
+    "ios": "macos",
 }
 
 
@@ -90,7 +102,7 @@ CLOAKBROWSER = KernelCaps(
     supported=True,
     seed_range=(10000, 99999),
     features=frozenset({
-        SEED, PLATFORM, TIMEZONE, LOCALE, WEBRTC_IP,
+        SEED, PLATFORM, MOBILE, TIMEZONE, LOCALE, WEBRTC_IP,
     }),
     arg_templates={
         SEED: "--fingerprint={}",
@@ -108,7 +120,7 @@ FINGERPRINT_CHROMIUM = KernelCaps(
     supported=True,
     seed_range=(1, 2147483647),
     features=frozenset({
-        SEED, PLATFORM, PLATFORM_VERSION, BRAND, BRAND_VERSION,
+        SEED, PLATFORM, MOBILE, PLATFORM_VERSION, BRAND, BRAND_VERSION,
         HARDWARE_CONCURRENCY, TIMEZONE, LOCALE, ACCEPT_LANG, NOISE_TOGGLE,
     }),
     arg_templates={
@@ -173,10 +185,20 @@ def caps_for(slug: str | None) -> KernelCaps:
 
 
 def platform_token(family: str | None) -> str | None:
-    """平台族 → 内核认的 token。桌面内核装不成手机，返回 None 表示不支持。"""
+    """平台族 → 内核认的 token。
+
+    移动族返回的是「最接近的桌面族」而不是它自己：内核没有移动平台这一档，
+    写 android 会被当成未知值静默回落（实测串成 Linux 桌面人格）。真正的移动
+    外观靠 `mobile` 字段在 entrypoint 里覆盖 UA / 视口 / DPR。
+    """
     if not family:
         return None
     return _PLATFORM_TOKENS.get(family)
+
+
+def is_pseudo_mobile(family: str | None) -> bool:
+    """这个平台族是不是「伪移动」——内核人格仍是桌面。"""
+    return family in MOBILE_FAMILIES
 
 
 def random_seed() -> int:
@@ -281,6 +303,7 @@ class Rendered:
 _FEATURE_LABELS: dict[str, str] = {
     SEED: "种子",
     PLATFORM: "平台",
+    MOBILE: "伪移动",
     PLATFORM_VERSION: "平台版本",
     BRAND: "品牌",
     BRAND_VERSION: "品牌版本",
@@ -302,6 +325,9 @@ def _spec_values(spec: FingerprintSpec) -> dict[str, object]:
     token = platform_token(spec.platform_family)
     if token:
         values[PLATFORM] = token
+    # 伪移动：UA / 视口 / DPR 交给 entrypoint 覆盖，这里是唯一的开关
+    if spec.platform_family in MOBILE_FAMILIES:
+        values[MOBILE] = spec.platform_family
     for name, value in (
         (PLATFORM_VERSION, spec.platform_version),
         (BRAND, spec.brand),

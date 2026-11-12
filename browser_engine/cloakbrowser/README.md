@@ -243,6 +243,17 @@ seed 在 C++ 层派生，外部改不了。
 一句话：**指纹库只需要给出「一个稳定的种子 + 平台 + 时区 + 语言 + 出口 IP」，
 剩下的交给内核。** 把 UA、屏幕、并发数硬写进去，反而会造出自相矛盾的指纹。
 
+### 伪移动（`FINGERPRINT_MOBILE`）
+
+`--fingerprint-platform` 只认 `windows / macos / linux`，写 `android` 会被当成
+未知值静默回落成 Linux 桌面人格（实测）。所以 `FINGERPRINT_MOBILE=android|ios`
+做的是**伪移动**：内核照桌面族起人格，再把 UA / 视口 / DPR 换成移动端，
+虚拟屏尺寸一起换，`screen` 不再是 1920×1080。
+
+边界：`navigator.platform`、Client Hints、TLS、`maxTouchPoints` 仍然是桌面。
+骗得过只看 UA 的站点，骗不过带风控的。细节和实测数据见
+`../fingerprint-chromium/README.md` 的同名小节。
+
 ### 落地方式
 
 后端按画像起容器时，两种都行：

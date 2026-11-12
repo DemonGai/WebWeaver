@@ -264,6 +264,8 @@ export interface FingerprintTemplate {
   /** 该内核能不能做指纹（ungoogled-chromium / Camoufox 为 false） */
   supported: boolean
   unsupported_reason: string | null
+  /** 伪移动：内核人格仍是桌面，只有 UA / 视口 / DPR 换成了移动端 */
+  pseudo_mobile: boolean
   /* 以下三项是采集回来的实测值，没采过就是空 */
   gpu: string | null
   canvas_hash: string | null
@@ -329,6 +331,10 @@ export interface FingerprintDetail {
   kernel_slug: string | null
   supported: boolean
   unsupported_reason: string | null
+  /** 伪移动：内核人格仍是桌面，只有 UA / 视口 / DPR 换成了移动端 */
+  pseudo_mobile: boolean
+  /** 伪移动的边界说明，真平台时为 null */
+  pseudo_mobile_note: string | null
   /** 该内核指纹机制的一句话说明 */
   note: string | null
 

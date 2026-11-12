@@ -173,18 +173,29 @@ def test_create_rejects_kernel_without_spoofing(api: TestClient) -> None:
     assert "纯净 Chromium" in res.json()["detail"]
 
 
-def test_create_rejects_mobile_family_on_desktop_kernel(api: TestClient) -> None:
-    res = api.post(
-        "/api/fingerprints",
-        json=_payload(
+def test_create_accepts_mobile_family_as_pseudo_mobile(api: TestClient) -> None:
+    """移动族不再挡在门外，但要说清楚它是「伪移动」。"""
+    created = _create(
+        _payload(
             kernel_id=_run(_kernel_id("CloakBrowser")),
             platform_family="android",
             code=f"{PREFIX}-android",
-        ),
+        )
     )
-    assert res.status_code == 422
-    # 桌面内核装不成手机，这件事必须在保存前就说清楚
-    assert "桌面内核" in res.json()["detail"]
+    assert created["supported"] is True
+    assert created["unsupported_reason"] is None
+    assert created["pseudo_mobile"] is True
+    # 提示必须说清楚边界：UA 变了，platform 与 TLS 没变
+    assert "伪移动" in (created["pseudo_mobile_note"] or "")
+    assert "Linux" in (created["pseudo_mobile_note"] or "")
+    # 下发给内核的平台是最接近的桌面族，不是 android
+    assert created["render"]["payload"]["platform"] == "linux"
+
+
+def test_desktop_template_is_not_marked_pseudo_mobile(api: TestClient) -> None:
+    created = _create(_payload(kernel_id=_run(_kernel_id("CloakBrowser")), code=f"{PREFIX}-win"))
+    assert created["pseudo_mobile"] is False
+    assert created["pseudo_mobile_note"] is None
 
 
 def test_create_rejects_seed_out_of_kernel_range(api: TestClient) -> None:

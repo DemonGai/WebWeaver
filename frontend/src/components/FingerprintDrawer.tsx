@@ -145,6 +145,9 @@ export function FingerprintDrawer({
                 >
                   {detail.supported ? '可下发' : '不支持'}
                 </span>
+                {detail.pseudo_mobile && (
+                  <span className="chip shrink-0 bg-amber-50 text-amber-600">伪移动</span>
+                )}
               </div>
               <p className="mt-0.5 font-mono text-[11px] text-[var(--ink-400)]">
                 {detail.fp_id} · {detail.kernel ?? '未绑定内核'}
@@ -169,6 +172,15 @@ export function FingerprintDrawer({
                 <IconAlert size={12} />
               </span>
               <span>{detail.unsupported_reason}</span>
+            </div>
+          )}
+
+          {detail.pseudo_mobile_note && (
+            <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[11.5px] text-amber-700">
+              <span className="mt-0.5 shrink-0">
+                <IconAlert size={12} />
+              </span>
+              <span>{detail.pseudo_mobile_note}</span>
             </div>
           )}
 

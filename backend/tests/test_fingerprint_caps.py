@@ -123,13 +123,23 @@ def test_noise_toggles_are_ignored_by_cloakbrowser() -> None:
     assert "噪声开关" in result.ignored
 
 
-def test_mobile_family_produces_no_platform_token() -> None:
-    assert caps.platform_token("android") is None
-    assert caps.platform_token("ios") is None
+def test_mobile_family_maps_to_closest_desktop_platform() -> None:
+    """内核只有三档桌面平台，移动族按最接近的那档下发，绝不传 android。
+
+    传 android 不会报错，只会被当成未知值静默回落成 Linux 桌面人格，
+    所以由我们显式映射，再靠 mobile 字段让 entrypoint 换 UA / 视口 / DPR。
+    """
+    assert caps.platform_token("android") == "linux"
+    assert caps.platform_token("ios") == "macos"
     assert caps.platform_token("windows") == "windows"
-    # 桌面内核装不成手机：payload 里干脆没有 platform，交给调用方拦掉
+
     rendered = caps.render(_spec(platform_family="android"), caps.CLOAKBROWSER)
-    assert "platform" not in rendered.payload
+    assert rendered.payload["platform"] == "linux"
+    # 伪移动的开关必须一起下发，否则 entrypoint 不知道要换 UA
+    assert rendered.payload["mobile"] == "android"
+    assert rendered.env["FINGERPRINT_MOBILE"] == "android"
+    assert caps.is_pseudo_mobile("android") is True
+    assert caps.is_pseudo_mobile("windows") is False
 
 
 # ── 种子 ─────────────────────────────────────────────────

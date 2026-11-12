@@ -70,6 +70,25 @@ def unsupported_reason(fp: Fingerprint, caps: KernelCaps) -> str | None:
     return None
 
 
+def pseudo_mobile_note(fp: Fingerprint, caps: KernelCaps) -> str | None:
+    """伪移动的边界说明。None 表示这条是真平台，没什么要交代的。
+
+    界面上必须写清楚，否则「Android 模板」会被当成真手机：内核人格是从
+    Linux / macOS 桌面起的，只有 UA / 视口 / DPR 换成了移动端。
+    """
+    family = fp.platform_family.value
+    if not caps.supported or not fingerprint_caps.is_pseudo_mobile(family):
+        return None
+    host = fingerprint_caps.platform_token(family)
+    host_label = _FAMILY_LABELS.get(host or "", host or "桌面")
+    label = _FAMILY_LABELS.get(family, family)
+    return (
+        f"伪移动：UA / 视口 / DPR 按 {label} 下发，"
+        f"navigator.platform、Client Hints、TLS 仍然是 {host_label} 桌面。"
+        "骗得过只看 UA 的站点，骗不过带风控的。"
+    )
+
+
 def spec_of(fp: Fingerprint) -> FingerprintSpec:
     return FingerprintSpec(
         seed=fp.seed,
@@ -159,6 +178,9 @@ def _row(
         kernel_slug=engine_slug(kernel.name) if kernel else None,
         supported=reason is None,
         unsupported_reason=reason,
+        pseudo_mobile=(
+            reason is None and fingerprint_caps.is_pseudo_mobile(fp.platform_family.value)
+        ),
         gpu=_gpu_of(fp),
         canvas_hash=(fp.probe or {}).get("canvasHash"),
         probed_at=fp.probed_at.isoformat() if fp.probed_at else None,
@@ -259,6 +281,10 @@ async def _build_detail(
         supported=reason is None,
         unsupported_reason=reason,
         note=caps.note or None,
+        pseudo_mobile=(
+            reason is None and fingerprint_caps.is_pseudo_mobile(fp.platform_family.value)
+        ),
+        pseudo_mobile_note=pseudo_mobile_note(fp, caps),
         seed=fp.seed,
         seed_range=list(caps.seed_range) if caps.seed_range else None,
         platform_family=fp.platform_family.value,
@@ -543,7 +569,14 @@ def _absorb(fp: Fingerprint, result: fingerprint_probe.ProbeResult) -> None:
     # 实测到的平台信息本来就在 probe 快照里。
 
     family = result.platform_family
-    if family and family in PlatformFamily.__members__:
+    # 伪移动的 UA 是故意造的：内核其实还是桌面，实测出来的族会跟模板声明的不一致。
+    # 这里以模板为准 —— 否则采一次就把 Android 模板改成 Linux，等于让工具自己
+    # 把「伪移动」这件事抹掉了。真平台没这个问题，照旧按实测纠正。
+    if (
+        family
+        and family in PlatformFamily.__members__
+        and not fingerprint_caps.is_pseudo_mobile(fp.platform_family.value)
+    ):
         fp.platform_family = PlatformFamily(family)
 
     timezone = raw.get("timezone")

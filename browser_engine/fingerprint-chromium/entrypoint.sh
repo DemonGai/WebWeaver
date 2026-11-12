@@ -291,6 +291,54 @@ if [ -n "${CHROME_ARGS:-}" ]; then
   args+=(${CHROME_ARGS})
 fi
 
+# ── 伪移动 ────────────────────────────────────────────────────────
+# 内核的 --fingerprint-platform 只认 windows / linux / macos：写 android 不会
+# 报错，只会静默回落成 Linux 桌面人格（实测 UA 变 "X11; Linux x86_64"、
+# maxTouchPoints 仍是 0）。所以「移动」只能伪 —— 内核照桌面族起人格，这里
+# 再把 UA / 视口 / DPR 换成移动端。
+#
+# 硬边界（别对用户吹过头）：navigator.platform、Client Hints、TLS 指纹仍然是
+# 桌面。骗得过只看 UA 的站点，骗不过带风控的。界面上的提示就是从这句来的。
+MOBILE="${FINGERPRINT_MOBILE:-$(fget mobile)}"
+if [ -n "$MOBILE" ]; then
+  # UA 里的主版本必须跟二进制一致，否则 UA 和 sec-ch-ua 的版本对不上，
+  # 比不改还容易被抓。所以现取，不写死。
+  CHROME_MAJOR="$("$CHROME" --version 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+  CHROME_MAJOR="${CHROME_MAJOR:-148}"
+  case "$MOBILE" in
+    ios)
+      # iPad 而不是 iPhone：X 下 Chromium 的窗口有 500 左右的最小宽度，
+      # 390 那种手机宽度会被撑到 501，窗口比 screen 还宽，反而露馅。
+      # 另一个原因是 iPad 桌面版 UA 本来就把 navigator.platform 报成 MacIntel，
+      # 和我们实际的 macOS 桌面人格刚好对得上。
+      MOBILE_UA="Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/${CHROME_MAJOR}.0.0.0 Mobile/15E148 Safari/604.1"
+      MOBILE_VIEW="744,1133"     # CSS 视口（iPad mini）
+      MOBILE_SCREEN="1488x2266"  # 设备像素 = CSS × DPR
+      MOBILE_DPR="2"
+      ;;
+    *)
+      # 540 而不是 412：同上，窗口最小宽度会把 412 撑到 501，
+      # 窗口比屏幕宽是能被查出来的矛盾。540(DIP) × 2 = 1080，屏幕也说得通。
+      MOBILE_UA="Mozilla/5.0 (Linux; Android 13; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR}.0.0.0 Mobile Safari/537.36"
+      MOBILE_VIEW="540,960"
+      MOBILE_SCREEN="1080x1920"
+      MOBILE_DPR="2"
+      ;;
+  esac
+  # 虚拟屏也换成手机尺寸：Xvfb 用的是设备像素，浏览器再按 DPR 折算成 CSS。
+  # 不换的话 screen 还是 1920x1080，采集回来的分辨率会跟移动人格自相矛盾。
+  # 这里在 Xvfb 之前赋值，vnc 分支读的就是新值。
+  SCREEN="${MOBILE_SCREEN}x24"
+  # 放在 CHROME_ARGS 之后：同一个参数出现两次时后写的赢，手填的窗口尺寸
+  # 也就跟着改成移动端了 —— 这是有意的，移动端不该配桌面视口。
+  args+=(
+    "--user-agent=${MOBILE_UA}"
+    "--window-size=${MOBILE_VIEW}"
+    "--force-device-scale-factor=${MOBILE_DPR}"
+  )
+  echo "[entrypoint] 伪移动：${MOBILE}，UA / 视口 / DPR 已换成移动端；platform、Client Hints、TLS 仍是桌面"
+fi
+
 # ── CDP 端口桥接 ──────────────────────────────────────────────────────
 # Chromium 143+ 忽略 --remote-debugging-address，只绑 127.0.0.1，容器外
 # （宿主机、后端、别的容器）一律连不上。用 socat 把 0.0.0.0:<对外端口>

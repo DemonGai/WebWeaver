@@ -165,6 +165,28 @@ aria2c -x8 -s16 -k1M -c --file-allocation=none --show-console-readout=false \
 | `FINGERPRINT_ACCEPT_LANG` | `--accept-lang=` | 留空 = 由 `--lang` 派生（`zh-CN` → `zh-CN,zh`） |
 | `FINGERPRINT_DISABLE_SPOOFING` | `--disable-spoofing=` | 只关个别项：`font,audio,canvas,clientrects,gpu` |
 | `FINGERPRINT_WEBRTC_IP` | **无此参数** | 填了只会打印一条告警，见下 |
+| `FINGERPRINT_MOBILE` | `--user-agent=` + `--window-size=` + `--force-device-scale-factor=` | `android` / `ios`（或空）。伪移动，见下 |
+
+### 伪移动（`FINGERPRINT_MOBILE`）
+
+上游的 `--fingerprint-platform` **只有 windows / linux / macos 三个值**：写
+`android` 不报错，只会被当成未知值，静默回落成 Linux 桌面人格（实测 UA 变成
+`X11; Linux x86_64`、`maxTouchPoints` 仍是 0）。所以移动端只能伪：
+
+| 做了什么 | 没做什么（硬边界） |
+|---|---|
+| UA 换成 Android 13 / iPad 的原版串，主版本号取二进制自己的 | `navigator.platform` 仍是 `Linux x86_64` / `MacIntel` |
+| 视口 540×960 / 744×1133，DPR 2 | Client Hints（`sec-ch-ua-platform`、`sec-ch-ua-mobile`）仍是桌面 |
+| 虚拟屏一起换成对应尺寸，`screen` 不再是 1920×1080 | TLS / JA3 / JA4 完全不变 |
+| — | `navigator.maxTouchPoints` 仍是 0（试过 `--touch-events=enabled`，不改这个值） |
+
+结论：**骗得过只看 UA 的站点，骗不过带风控的**。要真移动得跑 Android 容器
+（redroid / Waydroid）或真机群，不是这个镜像能做的。
+
+用 iPad 而不是 iPhone 当 iOS 人格有两个原因：X 下 Chromium 窗口有 500 左右的
+最小宽度，390 那种手机宽度会被撑到 501、窗口比 screen 还宽；另外 iPad 的桌面版
+UA 本来就把 `navigator.platform` 报成 `MacIntel`，正好和内核实际的 macOS 人格
+对得上，少一个矛盾点。
 
 entrypoint 还会固定加两个包里不暴露的开关：
 

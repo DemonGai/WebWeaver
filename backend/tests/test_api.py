@@ -118,6 +118,15 @@ def test_ip_pool(seeded_database: None) -> None:
     assert body["resources"][0]["status"] == "available"
     assert body["resources"][-1]["status"] == "failed"
 
+    # 认证信息要原样下发：前端拼 socks5://user:pass@host:port 全靠它
+    with_auth = [r for r in body["resources"] if r["username"]]
+    assert len(with_auth) == 9
+    assert all(r["password"] for r in with_auth)
+    # 机房那三条走 IP 白名单，没有账号密码
+    whitelisted = [r for r in body["resources"] if r["type"] == "机房"]
+    assert whitelisted and all(r["username"] is None and r["password"] is None for r in whitelisted)
+    assert all(r["port"] == 8000 and r["protocol"] == "socks5" for r in body["resources"])
+
 
 def test_novnc_detail(seeded_database: None) -> None:
     body = client.get("/api/novnc/brw-us-west-042").json()

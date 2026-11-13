@@ -12,6 +12,8 @@ import {
   IconBolt,
   IconCheckCircle,
   IconClipboard,
+  IconEye,
+  IconEyeOff,
   IconGlobe,
   IconLink,
   IconRefresh,
@@ -54,6 +56,20 @@ const KIND_STYLE: Record<IpResource['type'], { tile: string; chip: string; glyph
 
 const fallbackKind = { tile: 'bg-zinc-100 text-zinc-600', chip: 'bg-zinc-100 text-zinc-600' }
 const kindStyle = (kind: IpResource['type']) => KIND_STYLE[kind] ?? fallbackKind
+
+/**
+ * 拼出可以直接粘到别的工具里的代理地址。
+ *
+ * 有认证就带 ``user:pass@`` —— 现在大多数住宅代理都要账号密码，只复制
+ * ``socks5://ip:port`` 拿到别处根本连不上。账号密码要 percent-encode，
+ * 否则密码里出现 ``@`` / ``:`` 会把 URL 解析错位。
+ */
+function proxyUrl(r: IpResource): string {
+  const auth = r.username
+    ? `${encodeURIComponent(r.username)}${r.password ? `:${encodeURIComponent(r.password)}` : ''}@`
+    : ''
+  return `${r.protocol}://${auth}${r.ip}:${r.port}`
+}
 
 /**
  * 复制到剪贴板。
@@ -118,7 +134,7 @@ export default function IpPoolPage() {
       .filter((r) =>
         keyword === ''
           ? true
-          : [r.ip, r.supplier, r.region, r.city, r.type, r.protocol]
+          : [r.ip, r.supplier, r.region, r.city, r.type, r.protocol, r.username ?? '']
               .join(' ')
               .toLowerCase()
               .includes(keyword),
@@ -126,9 +142,10 @@ export default function IpPoolPage() {
   }, [data, tab, region, query])
 
   const copyProxy = async (r: IpResource) => {
-    const text = `${r.protocol}://${r.ip}:${r.port}`
-    const ok = await copyText(text)
-    notify(ok ? 'ok' : 'err', ok ? `已复制 ${text}` : '复制失败，请手动选中复制')
+    const ok = await copyText(proxyUrl(r))
+    // 提示里只报地址，不回显密码：toast 会留在屏幕上几秒，没必要把凭据摊在那儿
+    const label = `${r.ip}:${r.port}${r.username ? '（含账号密码）' : ''}`
+    notify(ok ? 'ok' : 'err', ok ? `已复制 ${label}` : '复制失败，请手动选中复制')
   }
 
   if (status === 'loading')
@@ -232,14 +249,14 @@ export default function IpPoolPage() {
           <table className="w-full min-w-[1100px]">
             <thead>
               <tr className="border-b border-[var(--line)]">
-                <th className="table-th w-[24%]">代理 / 供应商</th>
-                <th className="table-th w-[12%]">地区</th>
-                <th className="table-th w-[9%]">协议</th>
-                <th className="table-th w-[9%]">类型</th>
+                <th className="table-th w-[23%]">代理 / 供应商</th>
+                <th className="table-th w-[14%]">认证</th>
+                <th className="table-th w-[11%]">地区</th>
+                <th className="table-th w-[8%]">类型</th>
                 <th className="table-th w-[8%]">延迟</th>
-                <th className="table-th w-[12%]">状态</th>
-                <th className="table-th w-[16%]">绑定实例</th>
-                <th className="table-th w-[10%] text-right">操作</th>
+                <th className="table-th w-[11%]">状态</th>
+                <th className="table-th w-[14%]">绑定实例</th>
+                <th className="table-th w-[11%] text-right">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -279,6 +296,7 @@ export default function IpPoolPage() {
 function Row({ resource: r, onCopy }: { resource: IpResource; onCopy: () => void }) {
   const meta = STATUS_META[r.status]
   const kind = kindStyle(r.type)
+  const [reveal, setReveal] = useState(false)
 
   return (
     <tr className="border-b border-[#f4f4f6] last:border-0 hover:bg-[#fcfcfd]">
@@ -292,18 +310,44 @@ function Row({ resource: r, onCopy }: { resource: IpResource; onCopy: () => void
               {r.ip}
               <span className="text-[var(--ink-400)]">:{r.port || '默认'}</span>
             </div>
-            <div className="mt-0.5 truncate text-[10.5px] text-[var(--ink-400)]">{r.supplier}</div>
+            <div className="mt-0.5 truncate text-[10.5px] text-[var(--ink-400)]">
+              {r.protocol} · {r.supplier}
+            </div>
           </div>
         </div>
       </td>
 
       <td className="table-td">
-        <div className="text-[12px] text-[var(--ink-900)]">{r.region}</div>
-        <div className="mt-0.5 text-[10.5px] text-[var(--ink-400)]">{r.city}</div>
+        {r.username ? (
+          <div className="min-w-0">
+            <div className="truncate text-[12px] text-[var(--ink-900)]" title={r.username}>
+              {r.username}
+            </div>
+            <div className="mt-0.5 flex items-center gap-1">
+              <span className="truncate font-mono text-[10.5px] text-[var(--ink-400)]">
+                {reveal && r.password ? r.password : '••••••'}
+              </span>
+              {r.password && (
+                <button
+                  type="button"
+                  onClick={() => setReveal((v) => !v)}
+                  className="shrink-0 text-[var(--ink-400)] transition-colors hover:text-[var(--ink-900)]"
+                  aria-label={reveal ? '隐藏密码' : '显示密码'}
+                  title={reveal ? '隐藏密码' : '显示密码'}
+                >
+                  {reveal ? <IconEyeOff size={11} /> : <IconEye size={11} />}
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <span className="text-[12px] text-[var(--ink-400)]">无认证</span>
+        )}
       </td>
 
       <td className="table-td">
-        <span className="font-mono text-[11.5px] text-[var(--ink-700)]">{r.protocol}</span>
+        <div className="text-[12px] text-[var(--ink-900)]">{r.region}</div>
+        <div className="mt-0.5 text-[10.5px] text-[var(--ink-400)]">{r.city}</div>
       </td>
 
       <td className="table-td">
@@ -336,7 +380,7 @@ function Row({ resource: r, onCopy }: { resource: IpResource; onCopy: () => void
             type="button"
             onClick={onCopy}
             className="btn-ghost !h-7 shrink-0 !px-2 !text-[11px]"
-            title={`复制 ${r.protocol}://${r.ip}:${r.port}`}
+            title={`复制 ${proxyUrl(r)}`}
           >
             <IconClipboard size={11} />
             复制

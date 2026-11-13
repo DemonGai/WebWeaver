@@ -65,6 +65,9 @@ class IpResource(BaseModel):
     region: str
     city: str
     type: str
+    # 代理认证：前端要拼 socks5://user:pass@host:port，所以原样下发
+    username: str | None = None
+    password: str | None = None
     latency_ms: int
     health: int
     status: IpStatus

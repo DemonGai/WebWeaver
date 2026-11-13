@@ -42,6 +42,9 @@ export interface IpResource {
   region: string
   city: string
   type: '住宅' | '机房' | '移动'
+  /** 代理认证；机房走 IP 白名单的那种是 null */
+  username: string | null
+  password: string | null
   latency_ms: number
   health: number
   status: IpStatus

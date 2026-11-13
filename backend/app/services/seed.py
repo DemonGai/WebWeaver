@@ -326,6 +326,20 @@ IPS = [
     ("23.129.64.131", "CA", "安大略", "多伦多", "IPRoyal", IpKind.residential, 88),
 ]
 
+# 代理认证凭据。住宅 / 移动代理几乎都要账号密码，机房那三条走 IP 白名单，
+# 故意留空，好在界面上同时覆盖「带认证」和「不带认证」两种复制结果。
+IP_AUTH: dict[str, tuple[str, str]] = {
+    "104.28.16.73": ("brd-customer-hl_9f2c1a", "ww9xk2mq"),
+    "104.28.16.74": ("brd-customer-hl_us02", "uS8nC5mQ"),
+    "61.8.212.44": ("brd-customer-hl_hk02", "hK4vN8tR"),
+    "133.18.204.5": ("customer-ww_jp01", "Ox9pQ2mZ"),
+    "133.18.204.6": ("customer-ww_jp02", "Jp2rT7vX"),
+    "81.44.197.62": ("customer-ww_uk02", "Uk3wY6pD"),
+    "27.124.9.140": ("ww_sg01", "IpR7k2Lq"),
+    "27.124.9.188": ("ww_sg02", "Mv6bH1sK"),
+    "23.129.64.131": ("ww_ca01", "Ca5dF9jW"),
+}
+
 ACCOUNTS = [
     {
         "platform": "Amazon",
@@ -642,6 +656,7 @@ async def seed(session: AsyncSession, *, reset: bool = False) -> dict[str, int]:
 
     ips: dict[str, Ip] = {}
     for address, code, region, city, supplier, kind, latency in IPS:
+        auth = IP_AUTH.get(address)
         ip = Ip(
             address=address,
             port=8000,
@@ -651,6 +666,8 @@ async def seed(session: AsyncSession, *, reset: bool = False) -> dict[str, int]:
             country_code=code,
             region=region,
             city=city,
+            username=auth[0] if auth else None,
+            password=auth[1] if auth else None,
             latency_ms=latency,
             health=100 if kind != IpKind.mobile else 96,
             status=IpStatus.failed if latency == 0 else IpStatus.available,

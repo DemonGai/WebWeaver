@@ -786,6 +786,8 @@ def ip_pool(snapshot: Snapshot) -> IpPoolPayload:
                 region=ip.country_code,
                 city=ip.city or "—",
                 type=_IP_TYPE_LABEL[ip.kind],
+                username=ip.username,
+                password=ip.password,
                 latency_ms=ip.latency_ms or 0,
                 health=ip.health,
                 status=SchemaIpStatus(ip.status.value),

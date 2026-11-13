@@ -71,18 +71,19 @@ class Ip(IdMixin, TimestampMixin, table=True):
         sa_column_kwargs={"comment": "出口时区"},
     )
 
-    # 代理认证信息：密码落库前需加密（见 services 层的加解密封装）
+    # 代理认证信息。密码按使用方要求明文存：代理密码本来就由供应商分发，
+    # 而且前端「复制代理地址」要拼成 socks5://user:pass@host:port 直接用。
     username: str | None = Field(
         default=None,
         max_length=64,
         description="代理账号",
         sa_column_kwargs={"comment": "代理认证账号"},
     )
-    password_encrypted: str | None = Field(
+    password: str | None = Field(
         default=None,
-        max_length=255,
-        description="代理密码（加密存储）",
-        sa_column_kwargs={"comment": "代理认证密码（加密存储，不落明文）"},
+        max_length=128,
+        description="代理密码（明文）",
+        sa_column_kwargs={"comment": "代理认证密码（明文，供前端复制带认证的地址）"},
     )
 
     latency_ms: int | None = Field(

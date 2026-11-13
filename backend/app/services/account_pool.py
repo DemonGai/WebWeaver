@@ -35,21 +35,50 @@ from app.schemas.domain import (
     AccountUpdateRequest,
 )
 from app.services import audit
+from app.services.platforms import InvalidLoginUrl, detect_platform, normalize_login_url
 
-# 模板列序：解析器认这一份，前端「下载模板」下的也是这一份
-ACCOUNT_TEMPLATE_COLUMNS = ("platform", "username", "email", "region", "health", "note")
+# 模板列序：解析器认这一份，前端「下载模板」下的也是这一份。
+# 第一列是登录地址而不是平台——平台由地址推导，不需要用户填
+ACCOUNT_TEMPLATE_COLUMNS = ("login_url", "username", "email", "region", "health", "note")
 
 ACCOUNT_TEMPLATE_ROWS = (
-    ("Amazon", "shop_us_101", "shop_us_101@example.com", "美国区", "90", "主店，待绑定实例"),
-    ("TikTok", "kol_jp_022", "kol_jp_022@example.com", "日本区", "100", ""),
-    ("Shopify", "shop_uk_007", "shop_uk_007@example.com", "英国区", "85", "需要更换 Cookie"),
+    (
+        "https://sellercentral.amazon.com/ap/signin",
+        "shop_us_101",
+        "shop_us_101@example.com",
+        "美国区",
+        "90",
+        "主店，待绑定实例",
+    ),
+    (
+        "https://www.tiktok.com/login",
+        "kol_jp_022",
+        "kol_jp_022@example.com",
+        "日本区",
+        "100",
+        "",
+    ),
+    (
+        "https://admin.shopify.com/store/shop-uk-007",
+        "shop_uk_007",
+        "shop_uk_007@example.com",
+        "英国区",
+        "85",
+        "需要更换 Cookie",
+    ),
 )
 
 # 表头别名：中文列名、复数、常见简写都收，省得用户对着模板逐列改
 _HEADER_ALIASES = {
-    "platform": "platform",
-    "平台": "platform",
-    "站点": "platform",
+    "login_url": "login_url",
+    "url": "login_url",
+    "login": "login_url",
+    "login_page": "login_url",
+    "登录地址": "login_url",
+    "登录页": "login_url",
+    "登录页面": "login_url",
+    "登录链接": "login_url",
+    "url地址": "login_url",
     "username": "username",
     "account": "username",
     "user": "username",
@@ -76,6 +105,8 @@ MAX_COOKIES = 500
 
 @dataclass(slots=True)
 class ParsedAccount:
+    login_url: str
+    # 由 login_url 推导，解析阶段就算好，写库时直接用
     platform: str
     username: str
     email: str | None
@@ -205,16 +236,15 @@ def _as_health(value: str | None) -> int:
     return max(0, min(100, number))
 
 
-def parse_line(
-    line: str,
-    *,
-    default_platform: str = "",
-    header: list[str] | None = None,
-) -> ParsedAccount:
-    """把一行文本解析成账号字段。认不出来就抛 ``ValueError``，由调用方记失败行。"""
+def parse_line(line: str, *, header: list[str] | None = None) -> ParsedAccount:
+    """把一行文本解析成账号字段。认不出来就抛 ``ValueError``，由调用方记失败行。
+
+    第一列是**登录地址**，平台从它推导。所以「复制一份旧模板（第一列写平台名）」
+    会被判成失败行并提示第一列该填什么——这是有意为之：平台不该由人指定。
+    """
     if header:
         mapping = dict(zip(header, _split(line), strict=False))
-        platform = (mapping.get("platform") or default_platform).strip()
+        login_url = (mapping.get("login_url") or "").strip()
         username = (mapping.get("username") or "").strip()
         email = (mapping.get("email") or "").strip() or None
         region = (mapping.get("region") or "").strip()
@@ -222,32 +252,32 @@ def parse_line(
         note = (mapping.get("note") or "").strip() or None
     else:
         tokens = _split(line)
-        if len(tokens) == 1:
-            # 只有一列：当账号名，平台用弹窗里选的默认值
-            platform, username = default_platform.strip(), tokens[0]
-            email = region = None
-            health_raw = None
-            note = None
-        else:
-            platform = tokens[0] or default_platform.strip()
-            username = tokens[1] if len(tokens) > 1 else ""
-            email = tokens[2] if len(tokens) > 2 and tokens[2] else None
-            region = tokens[3] if len(tokens) > 3 else ""
-            health_raw = tokens[4] if len(tokens) > 4 else None
-            note = tokens[5] if len(tokens) > 5 and tokens[5] else None
+        if len(tokens) < 2:
+            raise ValueError("至少需要两列：登录地址, 账号")
+        login_url, username = tokens[0].strip(), tokens[1].strip()
+        email = tokens[2].strip() if len(tokens) > 2 and tokens[2].strip() else None
+        region = tokens[3].strip() if len(tokens) > 3 else ""
+        health_raw = tokens[4] if len(tokens) > 4 else None
+        note = tokens[5].strip() if len(tokens) > 5 and tokens[5].strip() else None
 
-    platform = (platform or "").strip()
-    username = (username or "").strip()
-    if not platform:
-        raise ValueError("缺少平台（清单里没写，也没选默认平台）")
+    if not login_url:
+        raise ValueError("缺少登录地址")
     if not username:
         raise ValueError("缺少账号名")
 
+    try:
+        # 平台与规范化的 URL 一起算出来，后面查重、写库都用规范化后的值
+        platform, _known = detect_platform(login_url)
+        normalized = normalize_login_url(login_url)
+    except InvalidLoginUrl as exc:
+        raise ValueError(f"登录地址无法识别：{exc}") from exc
+
     return ParsedAccount(
+        login_url=normalized[:512],
         platform=platform[:64],
         username=username[:128],
         email=(email or None) and email[:255],
-        region=(region or "").strip()[:64],
+        region=(region or "")[:64],
         health=_as_health(health_raw),
         note=(note or None) and note[:255],
     )
@@ -273,22 +303,31 @@ async def create_account(
     operator: str,
     request: Request | None = None,
 ) -> str:
-    platform = payload.platform.strip()
     username = payload.username.strip()
-    if not platform or not username:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="平台与账号名不能为空")
+    if not username:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="账号名不能为空")
+
+    # 平台不接收用户输入：只认登录地址，平台从域名推导
+    try:
+        platform = detect_platform(payload.login_url)[0]
+        login_url = normalize_login_url(payload.login_url)
+    except InvalidLoginUrl as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"登录地址无法识别：{exc}"
+        ) from exc
 
     exists = await session.scalar(
-        select(Account).where(Account.platform == platform, Account.username == username)
+        select(Account).where(Account.login_url == login_url, Account.username == username)
     )
     if exists is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            detail=f"账号已存在：{platform} / {username}",
+            detail=f"这个登录页下已经有账号「{username}」了",
         )
 
     cookies = normalize_cookies(payload.cookies)
     account = Account(
+        login_url=login_url,
         platform=platform,
         username=username,
         email=(payload.email or "").strip() or None,
@@ -312,7 +351,7 @@ async def create_account(
         resource_id=account.id,
         resource_name=f"{platform}/{username}",
         operator=operator,
-        detail=f"新建账号 {platform}/{username}，Cookie {len(cookies or [])} 条",
+        detail=f"新建账号 {platform}/{username}（{login_url}），Cookie {len(cookies or [])} 条",
         changes={"cookies": _cookie_payload(cookies)} if cookies else None,
         request=request,
     )
@@ -332,23 +371,28 @@ async def update_account(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="账号不存在")
 
     fields = payload.model_fields_set
-    before: dict[str, Any] = {}
+
+    # 换登录页要重新推导平台：否则改完地址，列表里还挂着旧平台
+    if "login_url" in fields and payload.login_url is not None:
+        try:
+            platform = detect_platform(payload.login_url)[0]
+            login_url = normalize_login_url(payload.login_url)
+        except InvalidLoginUrl as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"登录地址无法识别：{exc}"
+            ) from exc
+        account.login_url = login_url
+        account.platform = platform
 
     before_cookies = len(account.cookies or [])
     # cookies 传空串 / null 就是把登录态清掉，这是有意的操作，不是「没传」
     if "cookies" in fields:
         cookies = normalize_cookies(payload.cookies)
-        if cookies is None:
-            account.cookies = None
-        else:
-            account.cookies = cookies
-        before["cookies"] = before_cookies
+        account.cookies = cookies
         if "status" not in fields:
             # 清空 Cookie 后还挂着「已登录」会自相矛盾
             account.status = _resolve_status(None, cookies)
 
-    if "platform" in fields and payload.platform:
-        account.platform = payload.platform.strip()
     if "username" in fields and payload.username:
         account.username = payload.username.strip()
     if "email" in fields:
@@ -362,11 +406,16 @@ async def update_account(
     if "status" in fields and payload.status is not None:
         account.status = AccountStatus(payload.status)
 
-    # 改名撞上同平台已有账号时，唯一约束会在 commit 时抛 IntegrityError，
-    # 这里先查一次给出可读的 409
+    # 同登录页下不能有两个同名账号。唯一约束会在 commit 时抛 IntegrityError，
+    # 这里先查一次给出可读的 409；历史数据 login_url 为空时按 IS NULL 比
+    same_url = (
+        Account.login_url.is_(None)
+        if account.login_url is None
+        else Account.login_url == account.login_url
+    )
     duplicate = await session.scalar(
         select(Account).where(
-            Account.platform == account.platform,
+            same_url,
             Account.username == account.username,
             Account.id != account.id,
         )
@@ -374,13 +423,15 @@ async def update_account(
     if duplicate is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            detail=f"同平台下已存在账号：{account.username}",
+            detail=f"这个登录页下已经有账号「{account.username}」了",
         )
 
     account.updated_at = utcnow()
     await session.commit()
 
     detail = f"编辑账号 {account.platform}/{account.username}"
+    if "login_url" in fields:
+        detail += f"，登录地址改为 {account.login_url}"
     if "cookies" in fields:
         detail += f"，Cookie {before_cookies} → {len(account.cookies or [])} 条"
     await audit.record(
@@ -403,6 +454,7 @@ async def get_detail(session: AsyncSession, account_id: UUID) -> AccountDetail:
     return AccountDetail(
         id=str(account.id),
         platform=account.platform,
+        login_url=account.login_url,
         username=account.username,
         email=account.email,
         region=account.region,
@@ -420,8 +472,13 @@ async def import_accounts(
     operator: str,
     request: Request | None = None,
 ) -> AccountImportResult:
-    default_platform = payload.default_platform.strip()
-    existing = {(row.platform, row.username): row for row in await session.scalars(select(Account))}
+    # 查重的键是「登录地址 + 账号名」。历史账号没有登录地址，不放进索引——
+    # 拿 NULL 去比对谁都不相等，放进来反而会漏判
+    existing = {
+        (row.login_url, row.username): row
+        for row in await session.scalars(select(Account))
+        if row.login_url
+    }
 
     created = updated = skipped = failed = 0
     rows: list[AccountImportRow] = []
@@ -433,7 +490,7 @@ async def import_accounts(
         if not line or line.startswith("#"):
             continue
 
-        # 表头只认第一行数据之前的那一行，免得数据里正好有个叫「平台」的值被吞
+        # 表头只认第一行数据之前的那一行，免得数据里正好有个叫「登录地址」的值被吞
         if header is None and not seen:
             tokens = _split(line)
             if _looks_like_header(tokens):
@@ -441,13 +498,13 @@ async def import_accounts(
                 continue
 
         try:
-            item = parse_line(line, default_platform=default_platform, header=header)
+            item = parse_line(line, header=header)
         except ValueError as exc:
             failed += 1
             rows.append(AccountImportRow(line=index, ok=False, label=line[:48], message=str(exc)))
             continue
 
-        key = (item.platform, item.username)
+        key = (item.login_url, item.username)
         if key in seen:
             skipped += 1
             rows.append(
@@ -470,7 +527,7 @@ async def import_accounts(
                         line=index,
                         ok=False,
                         label=item.label,
-                        message="已存在（勾选「覆盖同平台账号」可更新）",
+                        message="已存在（勾选「覆盖同登录页账号」可更新）",
                     )
                 )
                 continue
@@ -486,6 +543,7 @@ async def import_accounts(
 
         session.add(
             Account(
+                login_url=item.login_url,
                 platform=item.platform,
                 username=item.username,
                 email=item.email,

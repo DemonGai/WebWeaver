@@ -60,6 +60,7 @@ from app.models import (
     Workspace,
 )
 from app.models.base import utcnow
+from app.services.platforms import detect_platform
 
 # 演示数据的时间都相对「now」生成，保证 humanize 出来是「2 小时前」这类文案
 NOW = utcnow()
@@ -343,6 +344,7 @@ IP_AUTH: dict[str, tuple[str, str]] = {
 ACCOUNTS = [
     {
         "platform": "Amazon",
+        "login_url": "https://sellercentral.amazon.com/ap/signin",
         "username": "shop_us_042",
         "email": "shop_us_042@webweaver.io",
         "status": AccountStatus.logged_in,
@@ -360,6 +362,7 @@ ACCOUNTS = [
     },
     {
         "platform": "Shopify",
+        "login_url": "https://admin.shopify.com/store/shop-uk-014",
         "username": "shop_uk_014",
         "email": "shop_uk_014@webweaver.io",
         "status": AccountStatus.logged_in,
@@ -371,6 +374,7 @@ ACCOUNTS = [
     },
     {
         "platform": "TikTok",
+        "login_url": "https://www.tiktok.com/login",
         "username": "kol_jp_018",
         "email": "kol_jp_018@webweaver.io",
         "status": AccountStatus.in_session,
@@ -387,6 +391,7 @@ ACCOUNTS = [
     },
     {
         "platform": "Amazon",
+        "login_url": "https://sellercentral.amazon.sg/ap/signin",
         "username": "store_sg_031",
         "email": "store_sg_031@webweaver.io",
         "status": AccountStatus.restricted,
@@ -399,6 +404,7 @@ ACCOUNTS = [
     },
     {
         "platform": "Meta",
+        "login_url": "https://business.facebook.com/adsmanager",
         "username": "ads_de_007",
         "email": "ads_de_007@webweaver.io",
         "status": AccountStatus.logged_in,
@@ -416,6 +422,7 @@ ACCOUNTS = [
     },
     {
         "platform": "Instagram",
+        "login_url": "https://www.instagram.com/accounts/login/",
         "username": "media_hk_025",
         "email": "media_hk_025@webweaver.io",
         "status": AccountStatus.unbound,
@@ -426,6 +433,7 @@ ACCOUNTS = [
     },
     {
         "platform": "X",
+        "login_url": "https://x.com/i/flow/login",
         "username": "brand_sg_009",
         "email": "brand_sg_009@webweaver.io",
         "status": AccountStatus.logged_in,
@@ -437,6 +445,7 @@ ACCOUNTS = [
     },
     {
         "platform": "Shopify",
+        "login_url": "https://admin.shopify.com/store/shop-ca-003",
         "username": "shop_ca_003",
         "email": "shop_ca_003@webweaver.io",
         "status": AccountStatus.logged_in,
@@ -680,6 +689,8 @@ async def seed(session: AsyncSession, *, reset: bool = False) -> dict[str, int]:
     for item in ACCOUNTS:
         payload = dict(item)
         payload["group_id"] = groups[payload.pop("group")].id
+        # 平台是派生值：以登录地址推导为准，种子里写的那份只起个可读作用
+        payload["platform"] = detect_platform(payload["login_url"])[0]
         account = Account(**payload)
         session.add(account)
         accounts[item["username"]] = account

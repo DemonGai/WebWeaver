@@ -45,6 +45,15 @@ const PLATFORM_STYLE: Record<string, string> = {
 
 const platformStyle = (platform: string) => PLATFORM_STYLE[platform] ?? 'bg-zinc-100 text-zinc-500'
 
+/** 列表里只展主机名，完整地址放在 title 里：一行放不下整条 URL */
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
+
 const healthTone = (a: AccountCard) =>
   a.status === 'restricted' ? 'rose' : a.status === 'in_session' ? 'blue' : 'emerald'
 
@@ -82,7 +91,15 @@ export default function AccountsPage() {
       .filter((a) =>
         keyword === ''
           ? true
-          : [a.name, a.platform, a.region, a.exit_ip ?? '', a.bound_instance ?? '', a.note ?? '']
+          : [
+              a.name,
+              a.platform,
+              a.login_url ?? '',
+              a.region,
+              a.exit_ip ?? '',
+              a.bound_instance ?? '',
+              a.note ?? '',
+            ]
               .join(' ')
               .toLowerCase()
               .includes(keyword),
@@ -315,8 +332,13 @@ function Row({
             <div className="truncate text-[12.5px] font-medium text-[var(--ink-900)]" title={a.name}>
               {a.name}
             </div>
-            <div className="mt-0.5 truncate text-[10.5px] text-[var(--ink-400)]">
-              {a.platform} · 注册 {a.registered_days} 天
+            {/* 平台是推导出来的，鼠标停在上面能看到推导它的登录地址 */}
+            <div
+              className="mt-0.5 truncate text-[10.5px] text-[var(--ink-400)]"
+              title={a.login_url ?? '未填登录地址'}
+            >
+              {a.platform}
+              {a.login_url && ` · ${hostOf(a.login_url)}`}
             </div>
           </div>
         </div>

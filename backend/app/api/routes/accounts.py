@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.api.deps import CurrentUser, SessionDep, require_permission
 from app.schemas.domain import (
@@ -11,9 +11,11 @@ from app.schemas.domain import (
     AccountImportResult,
     AccountPoolPayload,
     AccountUpdateRequest,
+    PlatformDetection,
 )
 from app.services import account_pool, cluster
 from app.services.cluster import Snapshot, get_snapshot
+from app.services.platforms import InvalidLoginUrl, detect_platform, normalize_login_url
 
 router = APIRouter(tags=["accounts"])
 
@@ -31,6 +33,19 @@ async def download_template() -> Response:
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="account-import-template.csv"'},
     )
+
+
+@router.get("/accounts/detect", response_model=PlatformDetection, summary="从登录地址识别平台")
+async def detect(login_url: str) -> PlatformDetection:
+    """填地址时即时回显「这是哪家平台」，前端不用再抄一份域名映射。"""
+    try:
+        platform, known = detect_platform(login_url)
+        normalized = normalize_login_url(login_url)
+    except InvalidLoginUrl as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return PlatformDetection(login_url=normalized, platform=platform, known=known)
 
 
 @router.post(

@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { Modal } from '@/components/Modal'
+import { Hint } from '@/components/Hint'
 import { Field, IconInput, SelectField } from '@/components/fields'
 import { SearchableSelect } from '@/components/Select'
-import { IconAlert, IconFingerprint, IconRefresh, IconSparkle } from '@/components/icons'
+import { IconFingerprint, IconRefresh, IconSparkle } from '@/components/icons'
 import { endpoints } from '@/api/endpoints'
 import type {
   FingerprintDetail,
@@ -378,27 +379,4 @@ function initForm(
     timezone: 'Asia/Shanghai',
     language: 'zh-CN',
   }
-}
-
-function Hint({
-  tone,
-  children,
-}: {
-  tone: 'rose' | 'zinc' | 'amber'
-  children: React.ReactNode
-}) {
-  const style =
-    tone === 'rose'
-      ? 'border-rose-200 bg-rose-50 text-rose-700'
-      : tone === 'amber'
-        ? 'border-amber-200 bg-amber-50 text-amber-700'
-        : 'border-[var(--line)] bg-[#fcfcfd] text-[var(--ink-500)]'
-  return (
-    <div className={`flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[11.5px] ${style}`}>
-      <span className="mt-0.5 shrink-0">
-        <IconAlert size={12} />
-      </span>
-      <span className="min-w-0">{children}</span>
-    </div>
-  )
 }

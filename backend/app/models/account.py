@@ -1,4 +1,4 @@
-"""账号表：各平台的店铺 / 社媒账号。"""
+"""账号表：各登录站点上的店铺 / 社媒账号。"""
 
 from datetime import datetime
 from typing import Any
@@ -15,21 +15,30 @@ from app.models.enums import AccountStatus
 class Account(IdMixin, TimestampMixin, table=True):
     __tablename__ = "accounts"
     __table_args__ = (
-        UniqueConstraint("platform", "username", name="uq_accounts_platform_username"),
-        {"comment": "账号表：各平台店铺与社媒账号，可归属分组并绑定浏览器实例"},
+        UniqueConstraint("login_url", "username", name="uq_accounts_login_url_username"),
+        {"comment": "账号表：按登录页地址归属，可绑定浏览器实例"},
     )
 
-    # Amazon / TikTok / Facebook ...
+    # 账号不绑平台，绑的是登录页面。平台由这个地址推导（services/platforms.py），
+    # 用户不需要也不应该手选——同一家平台在不同国家站点是不同的登录页
+    login_url: str | None = Field(
+        default=None,
+        max_length=512,
+        index=True,
+        description="登录页地址，平台由它推导",
+        sa_column_kwargs={"comment": "登录页地址；平台由域名推导，不单独指定"},
+    )
+    # Amazon / TikTok / Facebook ... 由 login_url 推导出来的展示值，用于筛选用
     platform: str = Field(
         max_length=64,
         index=True,
-        description="所属平台",
-        sa_column_kwargs={"comment": "所属平台，如 Amazon / TikTok / Facebook"},
+        description="由登录地址推导出的平台",
+        sa_column_kwargs={"comment": "由登录地址推导的平台，如 Amazon / TikTok（不手工指定）"},
     )
     username: str = Field(
         max_length=128,
-        description="平台登录名",
-        sa_column_kwargs={"comment": "平台登录名（与平台联合唯一）"},
+        description="登录名",
+        sa_column_kwargs={"comment": "登录名（与登录页地址联合唯一）"},
     )
     email: str | None = Field(
         default=None,

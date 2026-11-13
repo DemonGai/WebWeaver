@@ -6,6 +6,7 @@ import type {
   AccountImportRequest,
   AccountImportResult,
   AccountPoolPayload,
+  PlatformDetection,
   AuditLogList,
   AuthResponse,
   BrowserPoolPayload,
@@ -67,6 +68,9 @@ export const endpoints = {
   importAccounts: (body: AccountImportRequest) =>
     api.post<AccountImportResult>('/accounts/import', body),
   accountTemplate: () => api.text('/accounts/template'),
+  // 填登录地址时即时问「这是哪家平台」，映射只在后端维护一份
+  detectPlatform: (loginUrl: string) =>
+    api.get<PlatformDetection>(`/accounts/detect?login_url=${encodeURIComponent(loginUrl)}`),
   ipPool: () => api.get<IpPoolPayload>('/ip-pool'),
   /* 代理管理写操作 */
   importIps: (body: IpImportRequest) => api.post<IpImportResult>('/ip-pool/import', body),

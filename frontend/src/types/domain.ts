@@ -22,7 +22,9 @@ export interface InstanceSummary {
 export interface AccountCard {
   id: string
   name: string
+  /** 由登录地址推导，不是用户填的 */
   platform: string
+  login_url: string | null
   status: AccountStatus
   region: string
   registered_days: number
@@ -52,6 +54,7 @@ export interface AccountCookie {
 export interface AccountDetail {
   id: string
   platform: string
+  login_url: string | null
   username: string
   email: string | null
   region: string
@@ -62,7 +65,8 @@ export interface AccountDetail {
 }
 
 export interface AccountFormValues {
-  platform: string
+  /** 只填登录地址，平台由后端推导 */
+  login_url: string
   username: string
   email?: string | null
   region: string
@@ -75,9 +79,14 @@ export interface AccountFormValues {
 
 export interface AccountImportRequest {
   text: string
-  /** 清单里只有账号名时用这个补平台 */
-  default_platform: string
   overwrite: boolean
+}
+
+export interface PlatformDetection {
+  login_url: string
+  platform: string
+  /** false 表示域名没收录，平台是按注册域兜底出来的 */
+  known: boolean
 }
 
 export interface AccountImportRow {

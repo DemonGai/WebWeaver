@@ -46,6 +46,8 @@ class AccountCard(BaseModel):
     id: str
     name: str
     platform: str
+    # 平台是推导值，登录地址才是用户填的那一项
+    login_url: str | None = None
     status: AccountStatus
     region: str
     registered_days: int
@@ -65,6 +67,7 @@ class AccountDetail(BaseModel):
 
     id: str
     platform: str
+    login_url: str | None = None
     username: str
     email: str | None = None
     region: str
@@ -74,9 +77,19 @@ class AccountDetail(BaseModel):
     cookies: list[dict[str, Any]] | None = None
 
 
+class PlatformDetection(BaseModel):
+    """填了登录地址后即时回显「这是哪家平台」。"""
+
+    login_url: str
+    platform: str
+    # False 表示这域名不在内置映射里，平台名是按注册域兜底出来的
+    known: bool
+
+
 class AccountCreateRequest(BaseModel):
-    platform: str = Field(min_length=1, max_length=64, description="平台，如 Amazon")
-    username: str = Field(min_length=1, max_length=128, description="平台登录名")
+    # 只收登录地址，平台由服务端推导；传 platform 会被忽略
+    login_url: str = Field(min_length=1, max_length=512, description="登录页地址")
+    username: str = Field(min_length=1, max_length=128, description="登录名")
     email: str | None = Field(default=None, max_length=255)
     region: str = Field(default="", max_length=64)
     health: int = Field(default=100, ge=0, le=100)
@@ -90,7 +103,7 @@ class AccountCreateRequest(BaseModel):
 class AccountUpdateRequest(BaseModel):
     """编辑：字段都是可选的，只改真正传上来的那些。"""
 
-    platform: str | None = Field(default=None, min_length=1, max_length=64)
+    login_url: str | None = Field(default=None, min_length=1, max_length=512)
     username: str | None = Field(default=None, min_length=1, max_length=128)
     email: str | None = Field(default=None, max_length=255)
     region: str | None = Field(default=None, max_length=64)
@@ -103,7 +116,6 @@ class AccountUpdateRequest(BaseModel):
 
 class AccountImportRequest(BaseModel):
     text: str = Field(min_length=1, description="粘贴的账号清单，每行一条")
-    default_platform: str = Field(default="", max_length=64)
     overwrite: bool = False
 
 

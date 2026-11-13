@@ -1,33 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal } from '@/components/Modal'
 import { Field, IconInput, SelectField } from '@/components/fields'
-import { SearchableSelect } from '@/components/Select'
+import { Hint } from '@/components/Hint'
 import { endpoints } from '@/api/endpoints'
 import {
   IconAlert,
   IconCheckCircle,
   IconGlobe,
+  IconLink,
   IconMail,
   IconUpload,
   IconUser,
 } from '@/components/icons'
 import type { AccountCookie, AccountStatus } from '@/types/domain'
-
-/** 平台候选：常见的先摆出来，也允许直接敲一个新平台 */
-const PLATFORMS = [
-  'Amazon',
-  'Shopify',
-  'TikTok',
-  'Facebook',
-  'Meta',
-  'Instagram',
-  'X',
-  'YouTube',
-  'Shopee',
-  'Lazada',
-  'eBay',
-  'Etsy',
-]
 
 const STATUS_OPTIONS = [
   { value: '', label: '自动', hint: '有 Cookie 记为已登录' },
@@ -38,7 +23,7 @@ const STATUS_OPTIONS = [
 ]
 
 type Form = {
-  platform: string
+  loginUrl: string
   username: string
   email: string
   region: string
@@ -49,7 +34,7 @@ type Form = {
 }
 
 const EMPTY: Form = {
-  platform: 'Amazon',
+  loginUrl: '',
   username: '',
   email: '',
   region: '',
@@ -119,6 +104,9 @@ export function AccountDialog({
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  // 平台识别结果由后端算（映射只有一份，别在前端抄第二份）
+  const [detected, setDetected] = useState<{ platform: string; known: boolean } | null>(null)
+  const [detectError, setDetectError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
   const editing = accountId != null
@@ -139,7 +127,7 @@ export function AccountDialog({
       .accountDetail(accountId)
       .then((detail) => {
         setForm({
-          platform: detail.platform,
+          loginUrl: detail.login_url ?? '',
           username: detail.username,
           email: detail.email ?? '',
           region: detail.region,
@@ -155,6 +143,29 @@ export function AccountDialog({
       .finally(() => setLoading(false))
   }, [open, accountId])
 
+  useEffect(() => {
+    const url = form.loginUrl.trim()
+    if (!open || !url) {
+      setDetected(null)
+      setDetectError('')
+      return
+    }
+    // 每敲一个字符都打接口没必要，等用户停手再问
+    const timer = setTimeout(() => {
+      endpoints
+        .detectPlatform(url)
+        .then((res) => {
+          setDetected({ platform: res.platform, known: res.known })
+          setDetectError('')
+        })
+        .catch((err: Error) => {
+          setDetected(null)
+          setDetectError(err.message)
+        })
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [open, form.loginUrl])
+
   const set = <K extends keyof Form>(key: K, value: Form[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }))
 
@@ -165,8 +176,12 @@ export function AccountDialog({
 
   const submit = async () => {
     setError('')
-    if (!form.platform.trim()) {
-      setError('平台不能为空')
+    if (!form.loginUrl.trim()) {
+      setError('登录地址不能为空')
+      return
+    }
+    if (detectError) {
+      setError(`登录地址无法识别：${detectError}`)
       return
     }
     if (!form.username.trim()) {
@@ -188,7 +203,7 @@ export function AccountDialog({
     }
 
     const body = {
-      platform: form.platform.trim(),
+      login_url: form.loginUrl.trim(),
       username: form.username.trim(),
       email: form.email.trim() || null,
       region: form.region.trim(),
@@ -201,12 +216,13 @@ export function AccountDialog({
 
     setBusy(true)
     try {
+      const label = detected ? `${detected.platform} / ${body.username}` : body.username
       if (accountId) {
         await endpoints.updateAccount(accountId, body)
-        onSaved(`已保存 ${body.platform} / ${body.username}`)
+        onSaved(`已保存 ${label}`)
       } else {
         await endpoints.createAccount(body)
-        onSaved(`已新建 ${body.platform} / ${body.username}`)
+        onSaved(`已新建 ${label}`)
       }
       onClose()
     } catch (err) {
@@ -235,7 +251,7 @@ export function AccountDialog({
           <span className="min-w-0 flex-1 truncate text-[11.5px] text-[var(--ink-400)]">
             {probe.count > 0
               ? `识别到 ${probe.count} 条 Cookie`
-              : '同一个平台下账号名不能重复'}
+              : '同一个登录页下账号名不能重复'}
           </span>
           <div className="flex shrink-0 items-center gap-2">
             <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
@@ -252,15 +268,34 @@ export function AccountDialog({
         <p className="py-10 text-center text-[12.5px] text-[var(--ink-400)]">正在读取账号…</p>
       ) : (
         <div className="space-y-4 pb-2">
+          {/* 登录地址独占一行：它决定平台，比其他字段都长 */}
+          <Field label="登录地址" htmlFor="acct-login-url">
+            <IconInput
+              id="acct-login-url"
+              icon={<IconLink size={14} />}
+              value={form.loginUrl}
+              onChange={(e) => set('loginUrl', e.target.value)}
+              placeholder="https://sellercentral.amazon.com/ap/signin"
+              autoComplete="off"
+              spellCheck={false}
+              invalid={Boolean(detectError)}
+            />
+          </Field>
+          {detectError ? (
+            <Hint tone="rose">{detectError}</Hint>
+          ) : detected ? (
+            <Hint tone={detected.known ? 'emerald' : 'amber'}>
+              {detected.known
+                ? `识别为 ${detected.platform}`
+                : `这个域名没收录，平台按注册域记为「${detected.platform}」`}
+            </Hint>
+          ) : (
+            <Hint tone="zinc">
+              平台由登录地址自动识别，不用手选；同一平台的不同国家站点填各自的登录页
+            </Hint>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
-            <Field label="平台">
-              <SearchableSelect
-                value={form.platform}
-                onChange={(v) => set('platform', v)}
-                panelHeader="支持搜索，也可以直接输入新平台"
-                options={PLATFORMS}
-              />
-            </Field>
             <Field label="账号名" htmlFor="acct-username">
               <IconInput
                 id="acct-username"
@@ -271,9 +306,6 @@ export function AccountDialog({
                 autoComplete="off"
               />
             </Field>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
             <Field label="邮箱（可选）" htmlFor="acct-email">
               <IconInput
                 id="acct-email"
@@ -284,6 +316,9 @@ export function AccountDialog({
                 autoComplete="off"
               />
             </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <Field label="地区" htmlFor="acct-region">
               <IconInput
                 id="acct-region"
@@ -293,9 +328,6 @@ export function AccountDialog({
                 placeholder="美国区"
               />
             </Field>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
             <Field label="状态">
               <SelectField
                 value={form.status}
@@ -304,6 +336,9 @@ export function AccountDialog({
                 options={STATUS_OPTIONS}
               />
             </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <Field label="健康度 %" htmlFor="acct-health">
               <IconInput
                 id="acct-health"
@@ -316,17 +351,16 @@ export function AccountDialog({
                 trailing={<span className="text-[11px] text-[var(--ink-400)]">0 – 100</span>}
               />
             </Field>
+            <Field label="备注（可选）" htmlFor="acct-note">
+              <input
+                id="acct-note"
+                className="h-11 w-full rounded-xl border border-[var(--line)] bg-white px-3.5 text-[13px] text-[var(--ink-900)] outline-none focus:border-[#18181b] placeholder:text-[var(--ink-400)]"
+                value={form.note}
+                onChange={(e) => set('note', e.target.value)}
+                placeholder="例如：主店，待绑定实例"
+              />
+            </Field>
           </div>
-
-          <Field label="备注（可选）" htmlFor="acct-note">
-            <input
-              id="acct-note"
-              className="h-11 w-full rounded-xl border border-[var(--line)] bg-white px-3.5 text-[13px] text-[var(--ink-900)] outline-none focus:border-[#18181b] placeholder:text-[var(--ink-400)]"
-              value={form.note}
-              onChange={(e) => set('note', e.target.value)}
-              placeholder="例如：主店，待绑定实例"
-            />
-          </Field>
 
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2">

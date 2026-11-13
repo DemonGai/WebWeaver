@@ -1,34 +1,16 @@
 import { useMemo, useRef, useState } from 'react'
 import { Modal } from '@/components/Modal'
-import { Field } from '@/components/fields'
-import { SearchableSelect } from '@/components/Select'
 import { Checkbox } from '@/components/ui'
 import { ImportResultPanel } from '@/components/ImportResultPanel'
 import { endpoints } from '@/api/endpoints'
 import { IconAlert, IconDownload, IconUpload } from '@/components/icons'
 import type { AccountImportResult } from '@/types/domain'
 
-const PLATFORMS = [
-  'Amazon',
-  'Shopify',
-  'TikTok',
-  'Facebook',
-  'Meta',
-  'Instagram',
-  'X',
-  'YouTube',
-  'Shopee',
-  'Lazada',
-  'eBay',
-  'Etsy',
-]
-
-/** 示例与后端解析器的位置约定一一对应：平台,账号,邮箱,地区,健康度,备注 */
+/** 示例与后端解析器的位置约定一一对应：登录地址,账号,邮箱,地区,健康度,备注 */
 const SAMPLE = [
-  'Amazon,shop_us_101,shop_us_101@example.com,美国区,90,主店',
-  'TikTok,kol_jp_022,kol_jp_022@example.com,日本区,100',
-  'Shopify\tshop_uk_007\tshop_uk_007@example.com\t英国区\t85\t需要换 Cookie',
-  'shop_us_102',
+  'https://sellercentral.amazon.com/ap/signin,shop_us_101,shop_us_101@example.com,美国区,90,主店',
+  'https://www.tiktok.com/login,kol_jp_022,kol_jp_022@example.com,日本区,100',
+  'https://admin.shopify.com/store/shop-uk-007\tshop_uk_007\tshop_uk_007@example.com\t英国区\t85\t需要换 Cookie',
 ].join('\n')
 
 /**
@@ -51,7 +33,6 @@ export function AccountImportDialog({
   onImported: () => void
 }) {
   const [text, setText] = useState('')
-  const [platform, setPlatform] = useState('Amazon')
   const [overwrite, setOverwrite] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -78,7 +59,7 @@ export function AccountImportDialog({
 
   const pickFile = async (file: File | undefined) => {
     if (!file) return
-    // Excel 导出的 CSV 带 BOM，不去掉第一列表头会变成 "\uFEFFplatform"
+    // Excel 导出的 CSV 带 BOM，不去掉第一列表头会变成 "\uFEFFlogin_url"
     setText((await file.text()).replace(/^\uFEFF/, ''))
     setResult(null)
     setError('')
@@ -104,11 +85,7 @@ export function AccountImportDialog({
     setBusy(true)
     setError('')
     try {
-      const res = await endpoints.importAccounts({
-        text,
-        default_platform: platform.trim(),
-        overwrite,
-      })
+      const res = await endpoints.importAccounts({ text, overwrite })
       setResult(res)
       onImported()
     } catch (err) {
@@ -126,7 +103,7 @@ export function AccountImportDialog({
       open={open}
       onClose={close}
       title="批量导入账号"
-      subtitle="一行一个账号，支持 CSV / 制表符 / 逗号分隔；同平台账号重复的默认跳过"
+      subtitle="一行一个账号，第一列填登录地址，平台自动识别；同登录页的重复账号默认跳过"
       icon={<IconUpload size={16} />}
       width="max-w-[680px]"
       footer={
@@ -135,7 +112,7 @@ export function AccountImportDialog({
             {result
               ? `本次新增 ${result.created} 条${result.updated ? `、更新 ${result.updated} 条` : ''}`
               : lineCount > 0
-                ? `识别到 ${lineCount} 行，同平台同名账号会自动跳过`
+                ? `识别到 ${lineCount} 行，同登录页同名账号会自动跳过`
                 : '还没粘内容：也可以先下载模板，填好再上传'}
           </span>
           <div className="flex shrink-0 items-center gap-2">
@@ -162,15 +139,6 @@ export function AccountImportDialog({
           <ImportResultPanel result={result} unit="个账号" />
         ) : (
           <>
-            <Field label="默认平台">
-              <SearchableSelect
-                value={platform}
-                onChange={setPlatform}
-                panelHeader="清单里只有账号名时用这个补平台"
-                options={PLATFORMS}
-              />
-            </Field>
-
             <div className="space-y-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label
@@ -218,9 +186,9 @@ export function AccountImportDialog({
                 spellCheck={false}
               />
               <p className="text-[11px] leading-relaxed text-[var(--ink-400)]">
-                列序：<span className="font-mono">平台, 账号, 邮箱, 地区, 健康度, 备注</span>，
-                只有账号名时用上面的默认平台补齐；带表头的 CSV 按列名取值，列序颠倒也认；
-                <span className="font-mono">#</span> 开头的行当注释忽略。
+                列序：<span className="font-mono">登录地址, 账号, 邮箱, 地区, 健康度, 备注</span>；
+                平台由地址自动识别（Amazon / Shopify / TikTok …），不用也不能手填；
+                带表头的 CSV 按列名取值，列序颠倒也认；<span className="font-mono">#</span> 开头的行当注释忽略。
               </p>
             </div>
 
@@ -235,7 +203,7 @@ export function AccountImportDialog({
                 htmlFor="acct-import-overwrite"
                 className="cursor-pointer text-[12px] text-[var(--ink-700)]"
               >
-                覆盖已存在的同平台账号（只更新资料，不动 Cookie 与绑定关系）
+                覆盖已存在的同登录页账号（只更新资料，不动 Cookie 与绑定关系）
               </label>
             </div>
 

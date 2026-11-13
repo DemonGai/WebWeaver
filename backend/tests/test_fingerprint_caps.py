@@ -23,7 +23,6 @@ def _spec(**overrides: object) -> caps.FingerprintSpec:
         "timezone": "Asia/Shanghai",
         "locale": "zh-CN",
         "accept_lang": "zh-CN,zh",
-        "webrtc_ip": "203.0.113.10",
         "canvas_noise": True,
         "webgl_noise": True,
         "audio_noise": True,
@@ -60,10 +59,11 @@ def test_cloakbrowser_uses_its_own_parameter_names() -> None:
         "--fingerprint-platform=windows",
         "--fingerprint-timezone=Asia/Shanghai",
         "--fingerprint-locale=zh-CN",
-        "--fingerprint-webrtc-ip=203.0.113.10",
         # locale 必须同时落到 --lang，否则 navigator.language 还是英文
         "--lang=zh-CN",
     ]
+    # WebRTC 出口 IP 不属于指纹：它跟着实例绑定的那条 IP 走，由启动链路注入
+    assert not any(arg.startswith("--fingerprint-webrtc-ip") for arg in result.args)
 
 
 def test_fingerprint_chromium_uses_different_parameter_names() -> None:
@@ -76,12 +76,6 @@ def test_fingerprint_chromium_uses_different_parameter_names() -> None:
     # CloakBrowser 那套名字塞给它是无效的，这里绝对不能出现
     assert not any(arg.startswith("--fingerprint-timezone") for arg in result.args)
     assert not any(arg.startswith("--fingerprint-locale") for arg in result.args)
-
-
-def test_webrtc_ip_is_ignored_by_fingerprint_chromium() -> None:
-    result = caps.render(_spec(), caps.FINGERPRINT_CHROMIUM)
-    assert "webrtc_ip" not in result.payload
-    assert "WebRTC 出口 IP" in result.ignored
 
 
 def test_platform_version_is_ignored_by_cloakbrowser() -> None:
@@ -189,7 +183,6 @@ def test_digest_changes_with_any_downstream_input() -> None:
         {"timezone": "Europe/London"},
         {"locale": "en-GB"},
         {"hardware_concurrency": 16},
-        {"webrtc_ip": "198.51.100.7"},
         {"canvas_noise": False},
         {"platform_family": "macos"},
     ):

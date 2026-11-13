@@ -116,14 +116,9 @@ class Fingerprint(IdMixin, TimestampMixin, table=True):
         description="HTTP Accept-Language，如 zh-CN,zh",
         sa_column_kwargs={"comment": "HTTP Accept-Language，如 zh-CN,zh；为空按 language 派生"},
     )
-    # WebRTC 会绕过代理直连暴露本机 IP。CloakBrowser 用这个参数把候选地址
-    # 压成指定 IP；fingerprint-chromium 没有对应参数，只能靠禁非代理 UDP。
-    webrtc_ip: str | None = Field(
-        default=None,
-        max_length=64,
-        description="WebRTC 对外暴露的 IP",
-        sa_column_kwargs={"comment": "WebRTC 对外暴露的 IP；仅 CloakBrowser 支持"},
-    )
+    # 这里曾有一列 webrtc_ip（WebRTC 对外暴露的 IP），已删除：
+    # 出口 IP 属于实例绑定的那条 IP（browsers.ip_id → ips.address），
+    # 不在指纹模板里手填 —— 填了只会和真实出口对不上，反而露馅。
 
     # 分辨率 / DPR 同样是算出来的结果，采集回填，不参与下发
     resolution: str = Field(

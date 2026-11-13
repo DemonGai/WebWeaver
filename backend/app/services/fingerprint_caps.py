@@ -11,11 +11,15 @@
 | 时区                 | `--fingerprint-timezone` | `--timezone`         | 无                 |
 | 界面语言             | `--fingerprint-locale` + `--lang` | `--lang`       | 无                 |
 | Accept-Language      | 无                  | `--accept-lang`           | 无                 |
-| WebRTC 出口 IP       | `--fingerprint-webrtc-ip` | 无（只能禁非代理 UDP） | 无               |
 | 平台版本 / 品牌      | 无                  | `--fingerprint-platform-version` 等 | 无        |
 | 硬件并发             | 无                  | `--fingerprint-hardware-concurrency` | 无        |
 | 单独关噪声           | 无                  | `--disable-spoofing=canvas,audio,gpu` | 无       |
 | seed 范围            | 10000–99999         | 1–2147483647              | —                  |
+
+WebRTC 的出口 IP 不在这张表里：CloakBrowser 的 `--fingerprint-webrtc-ip` 填的是
+「WebRTC 声称自己从哪儿出去」，取值属于**实例绑定的那条 IP**（`browsers.ip_id`
+→ `ips.address`），启动时派生。放进指纹模板等于让模板自己编一个出口，和真实
+流量对不上时反而是最容易被识破的矛盾点。
 
 `seed` 是两者的公共语言：同一个整数在两边都会算出"一个人"，但**算出来的具体
 人格不一样**（两套补丁算法不同）。所以跨内核搬迁种子只能保证"换个人"，不能
@@ -42,7 +46,6 @@ HARDWARE_CONCURRENCY = "hardware_concurrency"
 TIMEZONE = "timezone"
 LOCALE = "locale"
 ACCEPT_LANG = "accept_lang"
-WEBRTC_IP = "webrtc_ip"
 NOISE_TOGGLE = "noise_toggle"
 
 # 生成随机种子用的区间：取两个内核的交集，这样同一个种子两边都能用，
@@ -102,16 +105,15 @@ CLOAKBROWSER = KernelCaps(
     supported=True,
     seed_range=(10000, 99999),
     features=frozenset({
-        SEED, PLATFORM, MOBILE, TIMEZONE, LOCALE, WEBRTC_IP,
+        SEED, PLATFORM, MOBILE, TIMEZONE, LOCALE,
     }),
     arg_templates={
         SEED: "--fingerprint={}",
         PLATFORM: "--fingerprint-platform={}",
         TIMEZONE: "--fingerprint-timezone={}",
         LOCALE: "--fingerprint-locale={}",
-        WEBRTC_IP: "--fingerprint-webrtc-ip={}",
     },
-    note="一个种子决定整套人格，只能单独覆盖时区 / 语言 / WebRTC 出口 IP",
+    note="一个种子决定整套人格，只能单独覆盖时区与语言",
 )
 
 FINGERPRINT_CHROMIUM = KernelCaps(
@@ -219,6 +221,11 @@ def _derive_accept_lang(lang: str) -> str:
 
 
 # 参与摘要的字段。顺序固定，否则同一个 spec 会算出不同的摘要。
+#
+# 这里留着 `webrtc_ip` 是个刻意的「幽灵字段」：它已经从指纹模板里删除（出口 IP
+# 属于实例绑定的那条 IP），但它当年在摘要里贡献过一行 `webrtc_ip=None`。
+# 直接抹掉会让所有历史指纹的摘要变化，被误判成「参数改过、需要重采」——
+# 而实际上内核收到的参数一个都没变。取不到值时按 None 处理，老摘要继续对得上。
 _DIGEST_FIELDS: tuple[str, ...] = (
     "seed",
     "platform_family",
@@ -247,7 +254,8 @@ def spec_digest(spec: FingerprintSpec) -> str:
     """
     parts: list[str] = []
     for name in _DIGEST_FIELDS:
-        value = getattr(spec, name)
+        # 已删除的历史字段取不到，按 None 参与散列，保住老摘要不变
+        value = getattr(spec, name, None)
         if isinstance(value, str) and value == "":
             value = None
         parts.append(f"{name}={value!r}")
@@ -273,7 +281,6 @@ class FingerprintSpec:
     timezone: str | None = None
     locale: str | None = None
     accept_lang: str | None = None
-    webrtc_ip: str | None = None
     canvas_noise: bool = True
     webgl_noise: bool = True
     audio_noise: bool = True
@@ -311,7 +318,6 @@ _FEATURE_LABELS: dict[str, str] = {
     TIMEZONE: "时区",
     LOCALE: "界面语言",
     ACCEPT_LANG: "Accept-Language",
-    WEBRTC_IP: "WebRTC 出口 IP",
     NOISE_TOGGLE: "噪声开关",
 }
 
@@ -336,7 +342,6 @@ def _spec_values(spec: FingerprintSpec) -> dict[str, object]:
         (TIMEZONE, spec.timezone),
         (LOCALE, spec.locale),
         (ACCEPT_LANG, spec.accept_lang),
-        (WEBRTC_IP, spec.webrtc_ip),
     ):
         if value not in (None, ""):
             values[name] = value

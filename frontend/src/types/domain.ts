@@ -316,7 +316,7 @@ export interface KernelFingerprintCaps {
   label: string
   supported: boolean
   seed_range: [number, number] | null
-  /** 与后端 fingerprint_caps 的能力名一致：seed / timezone / webrtc_ip ... */
+  /** 与后端 fingerprint_caps 的能力名一致：seed / timezone / brand ... */
   features: string[]
   note: string
   reason: string | null
@@ -349,7 +349,6 @@ export interface FingerprintDetail {
   timezone: string
   language: string
   accept_lang: string | null
-  webrtc_ip: string | null
   canvas_noise: boolean
   webgl_noise: boolean
   audio_noise: boolean
@@ -385,7 +384,6 @@ export interface FingerprintFormValues {
   timezone?: string
   language?: string
   accept_lang?: string | null
-  webrtc_ip?: string | null
   canvas_noise?: boolean
   webgl_noise?: boolean
   audio_noise?: boolean

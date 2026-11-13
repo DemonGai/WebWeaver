@@ -400,7 +400,6 @@ class FingerprintDetailPayload(BaseModel):
     timezone: str
     language: str
     accept_lang: str | None = None
-    webrtc_ip: str | None = None
     canvas_noise: bool = True
     webgl_noise: bool = True
     audio_noise: bool = True
@@ -439,7 +438,6 @@ class FingerprintCreate(BaseModel):
     timezone: str = "Asia/Shanghai"
     language: str = "zh-CN"
     accept_lang: str | None = None
-    webrtc_ip: str | None = None
     canvas_noise: bool = True
     webgl_noise: bool = True
     audio_noise: bool = True
@@ -462,7 +460,6 @@ class FingerprintUpdate(BaseModel):
     timezone: str | None = None
     language: str | None = None
     accept_lang: str | None = None
-    webrtc_ip: str | None = None
     canvas_noise: bool | None = None
     webgl_noise: bool | None = None
     audio_noise: bool | None = None

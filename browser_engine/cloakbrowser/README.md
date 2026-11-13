@@ -202,7 +202,12 @@ Dockerfile 里就是 `RUN python -c "...ensure_binary()"` 而没配任何 key �
 | `timezone` | 时区 | IANA 名，如 `Asia/Shanghai` |
 | `locale` | 界面语言 | 如 `zh-CN` |
 | `lang` | `--lang` 参数 | 一般与 `locale` 相同 |
-| `webrtc_ip` | WebRTC 对外 IP | 出口代理的 IP |
+| `webrtc_ip` | WebRTC 声称的出口 IP | 必须等于实例绑定的那条代理 IP |
+
+**`webrtc_ip` 不归指纹模板管。** 它填的是「WebRTC 会告诉页面我从哪儿出去」，
+答案由实例绑定哪条 IP 决定（`ips.address`），启动时通过 `FINGERPRINT_WEBRTC_IP`
+注入。写进指纹模板反而危险：模板里的值和真实出口对不上时，页面拿到的就是
+「WebRTC 说 A、HTTP 从 B 走」——这比不设还容易被判成伪装。
 
 ## 指纹库 → CloakBrowser 格式
 

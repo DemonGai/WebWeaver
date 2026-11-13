@@ -248,7 +248,6 @@ def test_detail_renders_per_kernel_material(api: TestClient) -> None:
             seed=42817,
             platform_version="10.0.0",
             hardware_concurrency=8,
-            webrtc_ip="203.0.113.10",
         )
     )
 
@@ -257,14 +256,13 @@ def test_detail_renders_per_kernel_material(api: TestClient) -> None:
     # CloakBrowser 不认平台版本，写进去也无效，必须列在 ignored 里
     assert "platform_version" not in cloak_render["payload"]
     assert "平台版本" in cloak_render["ignored"]
-    assert not cloak_render["ignored"].count("WebRTC 出口 IP")
 
     chromium_render = chromium["render"]
     assert chromium_render["payload"]["platform_version"] == "10.0.0"
     assert chromium_render["payload"]["hardware_concurrency"] == 8
-    # 反过来，fingerprint-chromium 没有 webrtc 参数
+    # WebRTC 出口 IP 不属于指纹：它跟着实例绑定的 IP 走，模板里连字段都不该有
     assert "webrtc_ip" not in chromium_render["payload"]
-    assert "WebRTC 出口 IP" in chromium_render["ignored"]
+    assert "webrtc_ip" not in chromium
 
 
 def test_detail_explains_why_unsupported(

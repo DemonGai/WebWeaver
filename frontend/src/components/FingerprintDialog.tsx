@@ -226,7 +226,6 @@ export function FingerprintDialog({
             {(features.has('brand') ||
               features.has('platform_version') ||
               features.has('hardware_concurrency') ||
-              features.has('webrtc_ip') ||
               features.has('accept_lang')) && (
               <div className="rounded-xl border border-[var(--line)] bg-[#fcfcfd] p-3.5">
                 <p className="mb-3 text-[11.5px] text-[var(--ink-400)]">
@@ -281,16 +280,6 @@ export function FingerprintDialog({
                       />
                     </Field>
                   )}
-                  {features.has('webrtc_ip') && (
-                    <Field label="WebRTC 出口 IP">
-                      <input
-                        className="h-11 w-full rounded-xl border border-[var(--line)] bg-white px-3.5 text-[13px] outline-none focus:border-[#18181b]"
-                        value={form.webrtc_ip ?? ''}
-                        onChange={(e) => set('webrtc_ip', e.target.value || null)}
-                        placeholder="填代理的出口 IP"
-                      />
-                    </Field>
-                  )}
                 </div>
               </div>
             )}
@@ -320,7 +309,6 @@ function initForm(
       timezone: initial.timezone,
       language: initial.language,
       accept_lang: initial.accept_lang,
-      webrtc_ip: initial.webrtc_ip,
       canvas_noise: initial.canvas_noise,
       webgl_noise: initial.webgl_noise,
       audio_noise: initial.audio_noise,

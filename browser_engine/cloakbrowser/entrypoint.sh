@@ -99,6 +99,9 @@ F_PLATFORM="$(fget platform)"
 F_TZ="$(fget timezone)"
 F_LOCALE="$(fget locale)"
 F_LANG="$(fget lang)"
+# webrtc_ip 仍认指纹文件里的字段（手工跑镜像时方便），但平台侧已经把它从
+# 指纹模板里删了：出口 IP 属于实例绑定的那条 IP，启动时由调度层用
+# FINGERPRINT_WEBRTC_IP 注入，和真实流量走同一个出口，不会自相矛盾。
 F_WEBRTC="$(fget webrtc_ip)"
 
 # 指纹文件在那儿、但没给出任何有效字段 —— 几乎一定是格式问题（不是 JSON、

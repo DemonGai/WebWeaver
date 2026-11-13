@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
-import { IconChevronDown, IconEye, IconEyeOff } from './icons'
+import type { InputHTMLAttributes, ReactNode } from 'react'
+import { IconEye, IconEyeOff } from './icons'
+import { Select, type SelectOption } from './Select'
 
 export function Field({
   label,
@@ -98,27 +99,37 @@ export function PasswordInput({
   )
 }
 
+/** 表单用的下拉。视觉在 `Select` 里，这里只保证和输入框同一套高度与圆角。 */
 export function SelectField({
+  value,
+  options,
+  onChange,
   icon,
+  placeholder,
+  size = 'lg',
+  panelHeader,
   className = '',
-  children,
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement> & { icon?: ReactNode }) {
+}: {
+  value: string
+  options: SelectOption[]
+  onChange: (value: string) => void
+  icon?: ReactNode
+  placeholder?: string
+  size?: 'sm' | 'lg'
+  panelHeader?: string
+  className?: string
+}) {
   return (
-    <div className={`${boxBase} border-[var(--line)] focus-within:border-[#18181b] ${className}`}>
-      {icon && <span className="shrink-0 text-[var(--ink-400)]">{icon}</span>}
-      <div className="relative w-full">
-        <select
-          {...props}
-          className="w-full appearance-none bg-transparent pr-6 text-[13px] text-[var(--ink-900)] outline-none"
-        >
-          {children}
-        </select>
-        <span className="pointer-events-none absolute top-1/2 right-0 -translate-y-1/2 text-[var(--ink-400)]">
-          <IconChevronDown size={14} />
-        </span>
-      </div>
-    </div>
+    <Select
+      value={value}
+      options={options}
+      onChange={onChange}
+      icon={icon}
+      placeholder={placeholder}
+      size={size}
+      panelHeader={panelHeader}
+      className={className}
+    />
   )
 }
 

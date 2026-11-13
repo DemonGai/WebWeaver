@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { endpoints } from '@/api/endpoints'
 import { Modal } from '@/components/Modal'
+import { Select as SelectControl } from '@/components/Select'
 import { IconBolt, IconBrowser, IconCheck } from '@/components/icons'
 import { ApiError } from '@/api/client'
 import type { BrowserDetail, BrowserFormValues, BrowserOptions } from '@/types/domain'
@@ -274,19 +275,21 @@ function Select({
   const current = options.find((o) => o.id === value)
   return (
     <div>
-      <select
+      <SelectControl
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-9 w-full rounded-xl border border-[var(--line)] bg-white px-2.5 text-[12.5px] text-[var(--ink-900)] outline-none focus:border-[#d4d4d8]"
-      >
-        <option value="">{placeholder}</option>
-        {options.map((o) => (
-          <option key={o.id} value={o.id} disabled={o.disabled}>
-            {o.label}
-            {o.disabled ? '（已被占用）' : ''}
-          </option>
-        ))}
-      </select>
+        onChange={onChange}
+        size="sm"
+        options={[
+          { value: '', label: placeholder },
+          ...options.map((o) => ({
+            value: o.id,
+            label: o.label,
+            hint: o.disabled ? '已被占用' : undefined,
+            // 已被别的实例绑走的资源不能选，但仍然列出来 —— 看不到就不知道去向
+            disabled: o.disabled,
+          })),
+        ]}
+      />
       <p className="mt-1 min-h-[14px] truncate text-[10.5px] text-[var(--ink-400)]">
         {current?.hint ?? ''}
       </p>
@@ -311,18 +314,16 @@ function VersionSelect({
 }) {
   return (
     <div>
-      <select
+      <SelectControl
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-9 w-full rounded-xl border border-[var(--line)] bg-white px-2.5 text-[12.5px] text-[var(--ink-900)] outline-none focus:border-[#d4d4d8]"
-      >
-        <option value="">跟随内核当前版本</option>
-        {versions.map((version) => (
-          <option key={version} value={version}>
-            {version}
-          </option>
-        ))}
-      </select>
+        onChange={onChange}
+        size="sm"
+        panelHeader="已下载版本"
+        options={[
+          { value: '', label: '跟随内核当前版本' },
+          ...versions.map((version) => ({ value: version, label: version })),
+        ]}
+      />
       <p className="mt-1 min-h-[14px] truncate text-[10.5px] text-[var(--ink-400)]">
         {value ? `固定使用 ${value}` : `内核当前版本：${current || '—'}`}
       </p>

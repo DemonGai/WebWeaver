@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Modal } from '@/components/Modal'
 import { Field, IconInput, SelectField } from '@/components/fields'
+import { SearchableSelect } from '@/components/Select'
 import { IconAlert, IconFingerprint, IconRefresh, IconSparkle } from '@/components/icons'
 import { endpoints } from '@/api/endpoints'
 import type {
@@ -139,28 +140,22 @@ export function FingerprintDialog({
           <Field label="适配内核">
             <SelectField
               value={form.kernel_id ?? ''}
-              onChange={(e) => set('kernel_id', e.target.value || null)}
-            >
-              <option value="">请选择</option>
-              {supportedCaps.map((item) => (
-                <option key={item.kernel_id} value={item.kernel_id}>
-                  {item.label}
-                </option>
-              ))}
-            </SelectField>
+              onChange={(v) => set('kernel_id', v || null)}
+              placeholder="请选择"
+              panelHeader="支持指纹的内核"
+              options={[
+                { value: '', label: '请选择', muted: true },
+                ...supportedCaps.map((item) => ({ value: item.kernel_id, label: item.label })),
+              ]}
+            />
           </Field>
 
           <Field label="平台">
             <SelectField
               value={form.platform_family ?? 'windows'}
-              onChange={(e) => set('platform_family', e.target.value as PlatformFamily)}
-            >
-              {FAMILIES.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </SelectField>
+              onChange={(v) => set('platform_family', v as PlatformFamily)}
+              options={FAMILIES.map((item) => ({ value: item.value, label: item.label }))}
+            />
           </Field>
         </div>
 
@@ -208,33 +203,22 @@ export function FingerprintDialog({
             )}
 
             <div className="grid grid-cols-2 gap-3">
-              <Field label="时区" htmlFor="fp-tz">
-                <input
-                  id="fp-tz"
-                  list="fp-tz-list"
-                  className="h-11 w-full rounded-xl border border-[var(--line)] bg-white px-3.5 text-[13px] text-[var(--ink-900)] outline-none focus:border-[#18181b]"
+              <Field label="时区">
+                <SearchableSelect
                   value={form.timezone ?? ''}
-                  onChange={(e) => set('timezone', e.target.value)}
+                  onChange={(v) => set('timezone', v)}
                   placeholder="Asia/Shanghai"
+                  panelHeader="常用时区，也可直接输入"
+                  options={TIMEZONES}
                 />
-                <datalist id="fp-tz-list">
-                  {TIMEZONES.map((tz) => (
-                    <option key={tz} value={tz} />
-                  ))}
-                </datalist>
               </Field>
 
               <Field label="界面语言">
                 <SelectField
                   value={form.language ?? 'zh-CN'}
-                  onChange={(e) => set('language', e.target.value)}
-                >
-                  {LANGUAGES.map((lang) => (
-                    <option key={lang} value={lang}>
-                      {lang}
-                    </option>
-                  ))}
-                </SelectField>
+                  onChange={(v) => set('language', v)}
+                  options={LANGUAGES.map((lang) => ({ value: lang, label: lang }))}
+                />
               </Field>
             </div>
 
@@ -253,13 +237,14 @@ export function FingerprintDialog({
                     <Field label="浏览器品牌">
                       <SelectField
                         value={form.brand ?? ''}
-                        onChange={(e) => set('brand', e.target.value || null)}
-                      >
-                        <option value="">内核默认</option>
-                        <option value="Chrome">Chrome</option>
-                        <option value="Edge">Edge</option>
-                        <option value="Opera">Opera</option>
-                      </SelectField>
+                        onChange={(v) => set('brand', v || null)}
+                        options={[
+                          { value: '', label: '内核默认' },
+                          { value: 'Chrome', label: 'Chrome' },
+                          { value: 'Edge', label: 'Edge' },
+                          { value: 'Opera', label: 'Opera' },
+                        ]}
+                      />
                     </Field>
                   )}
                   {features.has('platform_version') && (

@@ -10,6 +10,7 @@ import { AccountImportDialog } from '@/components/AccountImportDialog'
 import { Toast, useToast } from '@/components/Toast'
 import { copyText } from '@/lib/clipboard'
 import {
+  IconArrowUpRight,
   IconBolt,
   IconCheckCircle,
   IconClipboard,
@@ -45,14 +46,11 @@ const PLATFORM_STYLE: Record<string, string> = {
 
 const platformStyle = (platform: string) => PLATFORM_STYLE[platform] ?? 'bg-zinc-100 text-zinc-500'
 
-/** 列表里只展主机名，完整地址放在 title 里：一行放不下整条 URL */
-const hostOf = (url: string) => {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '')
-  } catch {
-    return url
-  }
-}
+/**
+ * 登录页列：去掉协议头让路径多露几个字，主域名才是要看的，
+ * 整条地址仍放 title 和 href 里，不受这里截断影响。
+ */
+const urlDisplay = (url: string) => url.replace(/^https?:\/\//, '').replace(/\/$/, '')
 
 const healthTone = (a: AccountCard) =>
   a.status === 'restricted' ? 'rose' : a.status === 'in_session' ? 'blue' : 'emerald'
@@ -192,8 +190,8 @@ export default function AccountsPage() {
       <Card className="mt-4 flex flex-wrap items-center justify-between gap-3 px-3.5 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <SearchInput
-            placeholder="搜索账号 / 平台 / 地区"
-            width="w-[240px]"
+            placeholder="搜索账号 / 平台 / 登录页"
+            width="w-[250px]"
             value={query}
             onChange={setQuery}
           />
@@ -217,17 +215,18 @@ export default function AccountsPage() {
 
       <Card className="mt-4 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1140px]">
+          <table className="w-full min-w-[1240px]">
             <thead>
               <tr className="border-b border-[var(--line)]">
-                <th className="table-th w-[22%]">账号 / 平台</th>
-                <th className="table-th w-[14%]">状态</th>
-                <th className="table-th w-[9%]">地区</th>
-                <th className="table-th w-[12%]">绑定实例</th>
-                <th className="table-th w-[12%]">出口 IP</th>
-                <th className="table-th w-[9%]">Cookie</th>
-                <th className="table-th w-[11%]">健康度</th>
-                <th className="table-th w-[11%] text-right">操作</th>
+                <th className="table-th w-[15%]">账号</th>
+                <th className="table-th w-[19%]">登录页</th>
+                <th className="table-th w-[12%]">状态</th>
+                <th className="table-th w-[7%]">地区</th>
+                <th className="table-th w-[11%]">绑定实例</th>
+                <th className="table-th w-[11%]">出口 IP</th>
+                <th className="table-th w-[7%]">Cookie</th>
+                <th className="table-th w-[9%]">健康度</th>
+                <th className="table-th w-[9%] text-right">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -242,7 +241,7 @@ export default function AccountsPage() {
               {rows.length === 0 && (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="px-4 py-16 text-center text-[12.5px] text-[var(--ink-400)]"
                   >
                     没有匹配的账号
@@ -332,16 +331,30 @@ function Row({
             <div className="truncate text-[12.5px] font-medium text-[var(--ink-900)]" title={a.name}>
               {a.name}
             </div>
-            {/* 平台是推导出来的，鼠标停在上面能看到推导它的登录地址 */}
-            <div
-              className="mt-0.5 truncate text-[10.5px] text-[var(--ink-400)]"
-              title={a.login_url ?? '未填登录地址'}
-            >
-              {a.platform}
-              {a.login_url && ` · ${hostOf(a.login_url)}`}
-            </div>
+            {/* 平台是登录地址推导出来的，地址本身在右边那列 */}
+            <div className="mt-0.5 truncate text-[10.5px] text-[var(--ink-400)]">{a.platform}</div>
           </div>
         </div>
+      </td>
+
+      <td className="table-td">
+        {a.login_url ? (
+          <a
+            href={a.login_url}
+            target="_blank"
+            rel="noreferrer"
+            title={a.login_url}
+            className="group flex max-w-full items-center gap-1 text-[11.5px] text-[var(--ink-500)] transition-colors hover:text-[var(--ink-900)]"
+          >
+            <span className="truncate">{urlDisplay(a.login_url)}</span>
+            <IconArrowUpRight
+              size={11}
+              className="shrink-0 text-[var(--ink-400)] group-hover:text-[var(--ink-700)]"
+            />
+          </a>
+        ) : (
+          <span className="text-[11.5px] text-amber-600">未填登录地址</span>
+        )}
       </td>
 
       <td className="table-td">

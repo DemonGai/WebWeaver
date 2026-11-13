@@ -16,7 +16,7 @@ const NAV = [
   { to: '/', label: '总览', icon: IconOverview, end: true },
   { to: '/browsers', label: '浏览器池', icon: IconBrowser },
   { to: '/accounts', label: '账号池', icon: IconUser },
-  { to: '/ip-pool', label: 'IP 池', icon: IconGlobe },
+  { to: '/ip-pool', label: '代理管理', icon: IconGlobe },
   { to: '/fingerprints', label: '指纹管理', icon: IconFingerprint },
   { to: '/kernels', label: '内核管理', icon: IconKernel },
 ]
@@ -25,7 +25,7 @@ const SEARCH_HINT: Record<string, string> = {
   '/kernels': '搜索内核版本',
   '/fingerprints': '搜索指纹模板',
   '/accounts': '搜索账号 / 平台',
-  '/ip-pool': '搜索 IP / 供应商',
+  '/ip-pool': '搜索代理 / 供应商',
   '/browsers': '搜索实例 / 分组',
 }
 

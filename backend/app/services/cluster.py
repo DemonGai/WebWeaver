@@ -780,11 +780,14 @@ def ip_pool(snapshot: Snapshot) -> IpPoolPayload:
             IpResource(
                 id=str(ip.id),
                 ip=ip.address,
+                port=ip.port,
+                protocol=ip.protocol.value,
                 supplier=ip.supplier,
                 region=ip.country_code,
                 city=ip.city or "—",
                 type=_IP_TYPE_LABEL[ip.kind],
                 latency_ms=ip.latency_ms or 0,
+                health=ip.health,
                 status=SchemaIpStatus(ip.status.value),
                 bound_instance=(
                     snapshot.browser_by_ip[ip.id].name if ip.id in snapshot.browser_by_ip else None

@@ -58,11 +58,15 @@ class AccountCard(BaseModel):
 class IpResource(BaseModel):
     id: str
     ip: str
+    # 代理只写地址没法用，端口和协议是「怎么连」的另一半
+    port: int
+    protocol: str
     supplier: str
     region: str
     city: str
     type: str
     latency_ms: int
+    health: int
     status: IpStatus
     bound_instance: str | None = None
 

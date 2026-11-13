@@ -36,11 +36,14 @@ export interface AccountCard {
 export interface IpResource {
   id: string
   ip: string
+  port: number
+  protocol: 'http' | 'https' | 'socks5'
   supplier: string
   region: string
   city: string
   type: '住宅' | '机房' | '移动'
   latency_ms: number
+  health: number
   status: IpStatus
   bound_instance: string | null
 }

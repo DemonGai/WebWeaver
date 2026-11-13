@@ -218,6 +218,48 @@ class IpPoolPayload(BaseModel):
     filters: list[FilterItem]
 
 
+# ── 代理导入 / 检测 ────────────────────────────────────
+class IpImportRequest(BaseModel):
+    text: str = Field(min_length=1, description="粘贴的代理清单，每行一条")
+    # 清单里没写类型 / 供应商时用这两个兜底，省得对着模板逐行补齐
+    default_kind: str = "residential"
+    default_supplier: str = "未标注"
+    overwrite: bool = False
+
+
+class IpImportRow(BaseModel):
+    """一行导入结果，只回失败的：成功的条数看汇总就够，逐行回传没意义。"""
+
+    line: int
+    ok: bool
+    label: str
+    message: str
+
+
+class IpImportResult(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    failed: int
+    rows: list[IpImportRow]
+
+
+class IpCheckItem(BaseModel):
+    id: str
+    ip: str
+    port: int
+    ok: bool
+    latency_ms: int
+    message: str
+
+
+class IpCheckResult(BaseModel):
+    checked: int
+    ok: int
+    failed: int
+    items: list[IpCheckItem]
+
+
 # ── noVNC ─────────────────────────────────────────────
 class NoVncInstance(BaseModel):
     id: str

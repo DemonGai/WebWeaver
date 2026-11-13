@@ -137,6 +137,14 @@ export const api = {
   /** 不带自动续期的请求：认证接口自己用，防止 401 → 刷新 → 401 的递归 */
   raw: <T>(path: string, init: RequestInit = {}) =>
     request<T>(path, init, { skipAuthRefresh: true }),
+  /** 取纯文本响应（CSV 模板这类）：走 JSON 解析会得到 null */
+  text: async (path: string) => {
+    const res = await fetch(`${BASE_URL}${path}`, { credentials: 'include' })
+    if (!res.ok) {
+      throw new ApiError(res.status, `请求失败（HTTP ${res.status}）`, null)
+    }
+    return res.text()
+  },
 }
 
 export interface HealthResponse {

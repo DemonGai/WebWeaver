@@ -8,6 +8,7 @@ import { StatTile } from '@/components/StatTile'
 import { SelectMenu } from '@/components/SelectMenu'
 import { Toast, useToast } from '@/components/Toast'
 import {
+  IconActivity,
   IconAlert,
   IconBolt,
   IconCheckCircle,
@@ -17,8 +18,10 @@ import {
   IconGlobe,
   IconLink,
   IconRefresh,
+  IconUpload,
   IconWifi,
 } from '@/components/icons'
+import { IpImportDialog } from '@/components/IpImportDialog'
 import { ErrorState, Loading } from './OverviewPage'
 import type { IpResource, IpStatus } from '@/types/domain'
 
@@ -103,11 +106,13 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 export default function IpPoolPage() {
-  const { data, status, error, reload } = useApi(endpoints.ipPool, [])
+  const { data, status, error, reload, refresh } = useApi(endpoints.ipPool, [])
 
   const [tab, setTab] = useState('all')
   const [query, setQuery] = useState('')
   const [region, setRegion] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const { toast, notify, dismiss } = useToast()
 
   /** 地区下拉的候选按库里实际出现的国家码生成，不写死一份清单 */
@@ -148,6 +153,34 @@ export default function IpPoolPage() {
     notify(ok ? 'ok' : 'err', ok ? `已复制 ${label}` : '复制失败，请手动选中复制')
   }
 
+  /**
+   * 跑一轮端口探测。
+   *
+   * 几百条代理逐个连会等到天荒地老，后端是并发探的（上限 16），前端只负责
+   * 把按钮锁住等结果。返回后要刷新：延迟、健康度、状态都在列表里显示。
+   *
+   * 用 ``refresh`` 而不是 ``reload``：后者会把页面打回 loading 态，整页骨架屏
+   * 一闪，正开着的导入弹窗也会被连带卸载。
+   */
+  const runCheck = async () => {
+    setChecking(true)
+    try {
+      const res = await endpoints.checkIps()
+      const failed = res.failed
+      notify(
+        failed === 0 ? 'ok' : 'err',
+        failed === 0
+          ? `检测完成：${res.checked} 条代理全部可达`
+          : `检测完成：${res.ok} 条可达，${failed} 条失败`,
+      )
+      refresh()
+    } catch (err) {
+      notify('err', (err as Error).message)
+    } finally {
+      setChecking(false)
+    }
+  }
+
   if (status === 'loading')
     return (
       <PageShell>
@@ -173,10 +206,20 @@ export default function IpPoolPage() {
         title="代理管理"
         subtitle="一个代理 = 一个出口，住宅 / 机房 / 移动统一调度"
         actions={
-          <button type="button" className="btn-ghost" onClick={reload}>
-            <IconRefresh size={14} />
-            刷新
-          </button>
+          <>
+            <button type="button" className="btn-ghost" onClick={runCheck} disabled={checking}>
+              <IconActivity size={14} />
+              {checking ? '检测中…' : '一键检测'}
+            </button>
+            <button type="button" className="btn-ghost" onClick={reload} disabled={checking}>
+              <IconRefresh size={14} />
+              刷新
+            </button>
+            <button type="button" className="btn-dark" onClick={() => setImportOpen(true)}>
+              <IconUpload size={14} />
+              导入代理
+            </button>
+          </>
         }
       />
 
@@ -289,6 +332,12 @@ export default function IpPoolPage() {
       </Card>
 
       <Toast toast={toast} onClose={dismiss} />
+
+      <IpImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={refresh}
+      />
     </PageShell>
   )
 }

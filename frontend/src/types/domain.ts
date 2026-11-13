@@ -204,6 +204,46 @@ export interface AccountPoolPayload {
   filters: { key: string; label: string; count: number }[]
 }
 
+export interface IpCheckItem {
+  id: string
+  ip: string
+  port: number
+  ok: boolean
+  latency_ms: number
+  message: string
+}
+
+export interface IpCheckResult {
+  checked: number
+  ok: number
+  failed: number
+  items: IpCheckItem[]
+}
+
+export interface IpImportRequest {
+  text: string
+  /** 清单里没写类型时用这个兜底 */
+  default_kind: 'residential' | 'datacenter' | 'mobile'
+  default_supplier: string
+  /** 同地址端口已存在时，覆盖还是跳过 */
+  overwrite: boolean
+}
+
+export interface IpImportRow {
+  line: number
+  ok: boolean
+  label: string
+  message: string
+}
+
+export interface IpImportResult {
+  created: number
+  updated: number
+  skipped: number
+  failed: number
+  rows: IpImportRow[]
+}
+
 export interface IpPoolPayload {
   totals: { available: number; total: number; online_rate: number }
   cards: { title: string; value: number; hint: string; tone: string; tag: string }[]

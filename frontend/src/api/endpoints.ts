@@ -19,6 +19,9 @@ import type {
   FingerprintPayload,
   KernelFingerprintCaps,
   InstallJob,
+  IpCheckResult,
+  IpImportRequest,
+  IpImportResult,
   IpPoolPayload,
   KernelDetailPayload,
   KernelInstance,
@@ -53,6 +56,11 @@ export const endpoints = {
     api.post<BrowserBatchResult>('/browsers/batch', { ids, action }),
   accounts: () => api.get<AccountPoolPayload>('/accounts'),
   ipPool: () => api.get<IpPoolPayload>('/ip-pool'),
+  /* 代理管理写操作 */
+  importIps: (body: IpImportRequest) => api.post<IpImportResult>('/ip-pool/import', body),
+  checkIps: () => api.post<IpCheckResult>('/ip-pool/check', {}),
+  // 模板是 CSV，不能走 JSON 解析
+  ipTemplate: () => api.text('/ip-pool/template'),
   novnc: (id: string) => api.get<NoVncPayload>(`/novnc/${id}`),
   fingerprints: () => api.get<FingerprintPayload>('/fingerprints'),
 

@@ -1,6 +1,7 @@
 """领域模型，与前端 src/types/domain.ts 一一对应。"""
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -53,6 +54,72 @@ class AccountCard(BaseModel):
     health: int
     action: str
     note: str | None = None
+    email: str | None = None
+    # 列表只回 Cookie 条数，不回整份内容：几十条 Cookie 逐行下发会把列表撑大，
+    # 真要编辑时再走 GET /accounts/{id} 拿完整 JSON
+    cookie_count: int = 0
+
+
+class AccountDetail(BaseModel):
+    """编辑弹窗用：含明文 Cookie，只在单条详情里给。"""
+
+    id: str
+    platform: str
+    username: str
+    email: str | None = None
+    region: str
+    health: int
+    status: AccountStatus
+    note: str | None = None
+    cookies: list[dict[str, Any]] | None = None
+
+
+class AccountCreateRequest(BaseModel):
+    platform: str = Field(min_length=1, max_length=64, description="平台，如 Amazon")
+    username: str = Field(min_length=1, max_length=128, description="平台登录名")
+    email: str | None = Field(default=None, max_length=255)
+    region: str = Field(default="", max_length=64)
+    health: int = Field(default=100, ge=0, le=100)
+    note: str | None = Field(default=None, max_length=255)
+    # 不传就按「有没有 Cookie」推断：有 Cookie 视为已登录，否则未绑定
+    status: AccountStatus | None = None
+    # 接受 cookies 数组，或 Playwright storage_state 整个对象 {"cookies": [...]}
+    cookies: Any | None = None
+
+
+class AccountUpdateRequest(BaseModel):
+    """编辑：字段都是可选的，只改真正传上来的那些。"""
+
+    platform: str | None = Field(default=None, min_length=1, max_length=64)
+    username: str | None = Field(default=None, min_length=1, max_length=128)
+    email: str | None = Field(default=None, max_length=255)
+    region: str | None = Field(default=None, max_length=64)
+    health: int | None = Field(default=None, ge=0, le=100)
+    note: str | None = Field(default=None, max_length=255)
+    status: AccountStatus | None = None
+    # 传 null 表示清空登录态；字段不出现表示不动
+    cookies: Any | None = None
+
+
+class AccountImportRequest(BaseModel):
+    text: str = Field(min_length=1, description="粘贴的账号清单，每行一条")
+    default_platform: str = Field(default="", max_length=64)
+    overwrite: bool = False
+
+
+class AccountImportRow(BaseModel):
+    line: int
+    ok: bool
+    label: str
+    message: str
+
+
+class AccountImportResult(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    failed: int
+    rows: list[AccountImportRow]
 
 
 class IpResource(BaseModel):

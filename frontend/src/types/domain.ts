@@ -31,6 +31,68 @@ export interface AccountCard {
   health: number
   action: string
   note: string | null
+  email: string | null
+  /** 列表只回条数，完整 Cookie 走详情接口 */
+  cookie_count: number
+}
+
+/** Playwright storage_state.cookies 里的单条 Cookie，字段随平台不同 */
+export interface AccountCookie {
+  name: string
+  value: string
+  domain?: string
+  path?: string
+  expires?: number
+  httpOnly?: boolean
+  secure?: boolean
+  sameSite?: string
+  [key: string]: unknown
+}
+
+export interface AccountDetail {
+  id: string
+  platform: string
+  username: string
+  email: string | null
+  region: string
+  health: number
+  status: AccountStatus
+  note: string | null
+  cookies: AccountCookie[] | null
+}
+
+export interface AccountFormValues {
+  platform: string
+  username: string
+  email?: string | null
+  region: string
+  health: number
+  note?: string | null
+  status?: AccountStatus
+  /** 传 null 表示清空登录态；不传表示不动 */
+  cookies?: AccountCookie[] | null
+}
+
+export interface AccountImportRequest {
+  text: string
+  /** 清单里只有账号名时用这个补平台 */
+  default_platform: string
+  overwrite: boolean
+}
+
+export interface AccountImportRow {
+  line: number
+  ok: boolean
+  label: string
+  message: string
+}
+
+export interface AccountImportResult {
+  created: number
+  updated: number
+  skipped: number
+  failed: number
+  rows: AccountImportRow[]
 }
 
 export interface IpResource {

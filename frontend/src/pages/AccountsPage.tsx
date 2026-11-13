@@ -5,15 +5,20 @@ import { PageHeader, PageShell } from '@/components/Layout'
 import { Card, PillTabs, ProgressBar, SearchInput, StatusDot } from '@/components/ui'
 import { StatTile } from '@/components/StatTile'
 import { SelectMenu } from '@/components/SelectMenu'
+import { AccountDialog } from '@/components/AccountDialog'
+import { AccountImportDialog } from '@/components/AccountImportDialog'
 import { Toast, useToast } from '@/components/Toast'
 import { copyText } from '@/lib/clipboard'
 import {
   IconBolt,
   IconCheckCircle,
   IconClipboard,
+  IconGear,
   IconGlobe,
   IconLock,
+  IconPlus,
   IconRefresh,
+  IconUpload,
   IconUser,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
@@ -44,11 +49,14 @@ const healthTone = (a: AccountCard) =>
   a.status === 'restricted' ? 'rose' : a.status === 'in_session' ? 'blue' : 'emerald'
 
 export default function AccountsPage() {
-  const { data, status, error, reload } = useApi(endpoints.accounts, [])
+  const { data, status, error, reload, refresh } = useApi(endpoints.accounts, [])
 
   const [tab, setTab] = useState('all-platform')
   const [query, setQuery] = useState('')
   const [region, setRegion] = useState('')
+  // null = 关闭；字符串 = 编辑该账号；'new' = 新建
+  const [editing, setEditing] = useState<string | null | undefined>(undefined)
+  const [importOpen, setImportOpen] = useState(false)
   const { toast, notify, dismiss } = useToast()
 
   /** 地区候选按库里实际出现的值生成，不写死一份国家清单 */
@@ -115,10 +123,20 @@ export default function AccountsPage() {
         title="账号管理"
         subtitle="多平台账号的登录态与出口，绑定后由浏览器实例接管"
         actions={
-          <button type="button" className="btn-ghost" onClick={reload}>
-            <IconRefresh size={14} />
-            刷新
-          </button>
+          <>
+            <button type="button" className="btn-ghost" onClick={reload}>
+              <IconRefresh size={14} />
+              刷新
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => setImportOpen(true)}>
+              <IconUpload size={14} />
+              批量导入
+            </button>
+            <button type="button" className="btn-dark" onClick={() => setEditing(null)}>
+              <IconPlus size={14} />
+              新增账号
+            </button>
+          </>
         }
       />
 
@@ -182,26 +200,32 @@ export default function AccountsPage() {
 
       <Card className="mt-4 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px]">
+          <table className="w-full min-w-[1140px]">
             <thead>
               <tr className="border-b border-[var(--line)]">
-                <th className="table-th w-[24%]">账号 / 平台</th>
-                <th className="table-th w-[16%]">状态</th>
-                <th className="table-th w-[10%]">地区</th>
-                <th className="table-th w-[15%]">绑定实例</th>
-                <th className="table-th w-[14%]">出口 IP</th>
-                <th className="table-th w-[12%]">健康度</th>
-                <th className="table-th w-[9%] text-right">操作</th>
+                <th className="table-th w-[22%]">账号 / 平台</th>
+                <th className="table-th w-[14%]">状态</th>
+                <th className="table-th w-[9%]">地区</th>
+                <th className="table-th w-[12%]">绑定实例</th>
+                <th className="table-th w-[12%]">出口 IP</th>
+                <th className="table-th w-[9%]">Cookie</th>
+                <th className="table-th w-[11%]">健康度</th>
+                <th className="table-th w-[11%] text-right">操作</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
-                <Row key={row.id} account={row} onCopy={() => copyAccount(row)} />
+                <Row
+                  key={row.id}
+                  account={row}
+                  onCopy={() => copyAccount(row)}
+                  onEdit={() => setEditing(row.id)}
+                />
               ))}
               {rows.length === 0 && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="px-4 py-16 text-center text-[12.5px] text-[var(--ink-400)]"
                   >
                     没有匹配的账号
@@ -223,12 +247,39 @@ export default function AccountsPage() {
         </div>
       </Card>
 
+      <AccountDialog
+        open={editing !== undefined}
+        accountId={editing ?? null}
+        onClose={() => setEditing(undefined)}
+        onSaved={(message) => {
+          notify('ok', message)
+          // 用 refresh 而不是 reload：reload 会把页面打回骨架屏，弹窗还没来得及卸载
+          refresh()
+        }}
+      />
+      <AccountImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => {
+          notify('ok', '导入完成，列表已更新')
+          refresh()
+        }}
+      />
+
       <Toast toast={toast} onClose={dismiss} />
     </PageShell>
   )
 }
 
-function Row({ account: a, onCopy }: { account: AccountCard; onCopy: () => void }) {
+function Row({
+  account: a,
+  onCopy,
+  onEdit,
+}: {
+  account: AccountCard
+  onCopy: () => void
+  onEdit: () => void
+}) {
   const meta = STATUS_META[a.status]
   const restricted = a.status === 'restricted'
   /**
@@ -299,14 +350,31 @@ function Row({ account: a, onCopy }: { account: AccountCard; onCopy: () => void 
       </td>
 
       <td className="table-td">
+        {a.cookie_count > 0 ? (
+          <span className="tnum text-[12px] font-medium text-emerald-600">{a.cookie_count} 条</span>
+        ) : (
+          <span className="text-[12px] text-[var(--ink-400)]">未采集</span>
+        )}
+      </td>
+
+      <td className="table-td">
         <div className="flex items-center gap-2">
-          <ProgressBar value={a.health} tone={healthTone(a)} height={4} className="!w-14" />
+          <ProgressBar value={a.health} tone={healthTone(a)} height={4} className="!w-10 shrink-0" />
           <span className="tnum text-[11.5px] text-[var(--ink-700)]">{a.health}%</span>
         </div>
       </td>
 
       <td className="table-td">
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="btn-ghost !h-7 shrink-0 !px-2 !text-[11px]"
+            title={`编辑 ${a.name}`}
+          >
+            <IconGear size={11} />
+            编辑
+          </button>
           <button
             type="button"
             onClick={onCopy}

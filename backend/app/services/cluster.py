@@ -696,6 +696,8 @@ def _account_card(account: Account, snapshot: Snapshot) -> AccountCard:
         health=account.health,
         action=_ACCOUNT_ACTION[account.status],
         note=account.note,
+        email=account.email,
+        cookie_count=len(account.cookies or []),
     )
 
 

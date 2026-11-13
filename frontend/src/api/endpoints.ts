@@ -1,6 +1,10 @@
 import { api } from './client'
 import type {
   UserMenuPayload,
+  AccountDetail,
+  AccountFormValues,
+  AccountImportRequest,
+  AccountImportResult,
   AccountPoolPayload,
   AuditLogList,
   AuthResponse,
@@ -55,6 +59,14 @@ export const endpoints = {
   browserBatch: (ids: string[], action: BrowserActionName) =>
     api.post<BrowserBatchResult>('/browsers/batch', { ids, action }),
   accounts: () => api.get<AccountPoolPayload>('/accounts'),
+  /* 账号管理写操作 */
+  accountDetail: (id: string) => api.get<AccountDetail>(`/accounts/${id}`),
+  createAccount: (body: AccountFormValues) => api.post<AccountDetail>('/accounts', body),
+  updateAccount: (id: string, body: Partial<AccountFormValues>) =>
+    api.patch<void>(`/accounts/${id}`, body),
+  importAccounts: (body: AccountImportRequest) =>
+    api.post<AccountImportResult>('/accounts/import', body),
+  accountTemplate: () => api.text('/accounts/template'),
   ipPool: () => api.get<IpPoolPayload>('/ip-pool'),
   /* 代理管理写操作 */
   importIps: (body: IpImportRequest) => api.post<IpImportResult>('/ip-pool/import', body),

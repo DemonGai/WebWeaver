@@ -83,7 +83,11 @@ def test_browsers_and_filters(seeded_database: None) -> None:
     assert by_name["brw-sg-sin-031"]["note"] == "代理不可达，尝试重连 3 次"
     assert by_name["brw-au-syd-011"]["note"] == "等待调度"
     assert by_name["brw-us-west-042"]["group"] == "北美店铺"
-    assert by_name["brw-us-west-042"]["fingerprint"] == "Win11 / C128"
+    # 平台 / 代号两段不能重复（fp-cloak-win11 曾被拼成「Win11 / Win11」），
+    # 代号跟平台撞了要往前退到内核缩写
+    assert by_name["brw-us-west-042"]["fingerprint"] == "Win11 / Cloak"
+    # 同平台的两条模板靠代号区分：Win10 那条属于 fingerprint-chromium
+    assert by_name["brw-de-fra-007"]["fingerprint"] == "Win10 / Fpcr"
 
 
 def test_accounts(seeded_database: None) -> None:

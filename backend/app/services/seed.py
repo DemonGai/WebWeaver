@@ -189,144 +189,125 @@ KERNELS = [
     },
 ]
 
+# 指纹矩阵：2 个能做指纹的内核 × 4 个平台族，正好八条。
+# 摆成矩阵是为了演示两件事：同一平台换个内核会有什么差别、同一内核换个平台会怎样。
+#
+# 只写「种子 + 声明式参数」，不写 UA / 分辨率 / DPR —— 那三项是内核按种子算出来的，
+# 手填进种子只会造出与真实人格矛盾的假数据（采集流程会把实测值回填进来）。
 FINGERPRINTS = [
+    # ── CloakBrowser：只认 seed / 平台 / 时区 / 语言 / WebRTC IP ─────────
     {
-        "code": "fp-win11-c128",
+        "code": "fp-cloak-win11",
         "name": "Win11 · Chrome 128 · 美国",
         "seed": 24760,
         "platform_family": PlatformFamily.windows,
         "platform": "Windows 11",
-        "user_agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/128.0.6613.120 Safari/537.36"
-        ),
         "timezone": "America/Los_Angeles",
         "language": "en-US",
-        "resolution": "1440x900",
-        "dpr": "1",
         "uniqueness": 96,
         "kernel": "CloakBrowser",
     },
     {
-        "code": "fp-macos-c128",
-        "name": "macOS · Chrome 128 · 日本",
+        "code": "fp-cloak-macos",
+        "name": "macOS 14 · Chrome 128 · 日本",
         "seed": 70379,
         "platform_family": PlatformFamily.macos,
         "platform": "macOS 14",
-        "user_agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/128.0.6613.120 Safari/537.36"
-        ),
         "timezone": "Asia/Tokyo",
         "language": "ja-JP",
-        "resolution": "1680x1050",
-        "dpr": "2",
         "uniqueness": 94,
-        "kernel": "Camoufox",
+        "kernel": "CloakBrowser",
     },
     {
-        "code": "fp-android-c128",
-        "name": "Android 14 · Chrome 128 · 新加坡",
+        "code": "fp-cloak-android",
+        "name": "Android 14 · Pixel 8 · 新加坡",
         "seed": 75658,
         "platform_family": PlatformFamily.android,
         "platform": "Pixel 8 / Android 14",
-        "user_agent": (
-            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/128.0.6613.120 Mobile Safari/537.36"
-        ),
         "timezone": "Asia/Singapore",
         "language": "en-US",
-        "resolution": "412x915",
-        "dpr": "2.625",
         "uniqueness": 91,
         "kernel": "CloakBrowser",
     },
     {
-        "code": "fp-win10-c126",
+        "code": "fp-cloak-ios",
+        "name": "iOS 17 · iPhone 15 · 香港",
+        "seed": 51204,
+        "platform_family": PlatformFamily.ios,
+        # 伪移动：内核按 macOS 起人格，UA / 视口由 entrypoint 换成 iPad
+        "platform": "iPhone 15 / iOS 17",
+        "timezone": "Asia/Hong_Kong",
+        "language": "zh-HK",
+        "uniqueness": 89,
+        "kernel": "CloakBrowser",
+    },
+    # ── fingerprint-chromium：多一组平台版本 / 品牌 / 硬件并发 ───────────
+    {
+        "code": "fp-fpcr-win10",
         "name": "Win10 · Chrome 126 · 德国",
         "seed": 10452,
         "platform_family": PlatformFamily.windows,
         "platform": "Windows 10",
-        "user_agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/126.0.6478.126 Safari/537.36"
-        ),
         "timezone": "Europe/Berlin",
         "language": "de-DE",
-        "resolution": "1920x1080",
-        "dpr": "1",
+        "accept_lang": "de-DE,de",
+        "platform_version": "10.0.0",
+        "brand": "Chrome",
+        "brand_version": "126.0.6478.126",
+        "hardware_concurrency": 8,
         # 关掉 Canvas 噪声：fingerprint-chromium 会把它翻译成
-        # --disable-spoofing=canvas。这条正好演示「单开一项会更好还是更差」
+        # --disable-spoofing=canvas。这条正好演示「单关一项反而更好认」
         "canvas_noise": False,
+        "uniqueness": 92,
         "kernel": "fingerprint-chromium",
     },
     {
-        "code": "fp-win11-c128uk",
-        "name": "Win11 · Chrome 128 · 英国",
-        "seed": 83373,
-        "platform_family": PlatformFamily.windows,
-        "platform": "Windows 11",
-        "user_agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/128.0.6613.120 Safari/537.36"
-        ),
-        "timezone": "Europe/London",
-        "language": "en-GB",
-        "resolution": "1536x864",
-        "dpr": "1.25",
-        "uniqueness": 93,
-        "kernel": "CloakBrowser",
-    },
-    {
-        "code": "fp-macos-safari",
-        "name": "macOS · Safari 17 · 香港",
+        "code": "fp-fpcr-macos",
+        "name": "macOS 14 · Chrome 128 · 加拿大",
         "seed": 37572,
         "platform_family": PlatformFamily.macos,
         "platform": "macOS 14",
-        "user_agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-            "(KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-        ),
-        "timezone": "Asia/Hong_Kong",
-        "language": "zh-HK",
-        "resolution": "2560x1440",
-        "dpr": "2",
-        "uniqueness": 95,
-        "kernel": "Camoufox",
-    },
-    {
-        "code": "fp-win11-c128ca",
-        "name": "Win11 · Chrome 127 · 加拿大",
-        "seed": 53732,
-        "platform_family": PlatformFamily.windows,
-        "platform": "Windows 11",
-        "user_agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/127.0.6533.120 Safari/537.36"
-        ),
         "timezone": "America/Toronto",
         "language": "en-CA",
-        "resolution": "1920x1080",
-        "dpr": "1",
-        "uniqueness": 92,
-        "kernel": "CloakBrowser",
+        "accept_lang": "en-CA,en",
+        "platform_version": "14.5.0",
+        "brand": "Chrome",
+        "brand_version": "128.0.6613.120",
+        "hardware_concurrency": 10,
+        "uniqueness": 95,
+        "kernel": "fingerprint-chromium",
     },
     {
-        "code": "fp-win11-c128au",
-        "name": "Win11 · Chrome 128 · 澳洲",
-        "seed": 35475,
-        "platform_family": PlatformFamily.windows,
-        "platform": "Windows 11",
-        "user_agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/128.0.6613.120 Safari/537.36"
-        ),
+        "code": "fp-fpcr-android",
+        "name": "Android 13 · Pixel 7 · 英国",
+        "seed": 83373,
+        "platform_family": PlatformFamily.android,
+        "platform": "Pixel 7 / Android 13",
+        "timezone": "Europe/London",
+        "language": "en-GB",
+        "accept_lang": "en-GB,en",
+        "platform_version": "13.0.0",
+        "brand": "Chrome",
+        "brand_version": "128.0.6613.120",
+        "hardware_concurrency": 8,
+        "uniqueness": 90,
+        "kernel": "fingerprint-chromium",
+    },
+    {
+        "code": "fp-fpcr-ios",
+        "name": "iOS 17 · iPhone 14 · 澳洲",
+        "seed": 62481,
+        "platform_family": PlatformFamily.ios,
+        "platform": "iPhone 14 / iOS 17",
         "timezone": "Australia/Sydney",
         "language": "en-AU",
-        "resolution": "1920x1080",
-        "dpr": "1",
-        "uniqueness": 90,
-        "kernel": "CloakBrowser",
+        "accept_lang": "en-AU,en",
+        "platform_version": "17.5.0",
+        "brand": "Safari",
+        "brand_version": "17.5",
+        "hardware_concurrency": 6,
+        "uniqueness": 88,
+        "kernel": "fingerprint-chromium",
     },
 ]
 
@@ -459,7 +440,7 @@ BROWSERS = [
         "name": "brw-us-west-042",
         "status": BrowserStatus.running,
         "group": "na-store",
-        "fingerprint": "fp-win11-c128",
+        "fingerprint": "fp-cloak-win11",
         "ip": "104.28.16.73",
         "account": "shop_us_042",
         "fps": 32,
@@ -472,7 +453,7 @@ BROWSERS = [
         "name": "brw-jp-tokyo-018",
         "status": BrowserStatus.running,
         "group": "jp-social",
-        "fingerprint": "fp-macos-c128",
+        "fingerprint": "fp-cloak-macos",
         "ip": "133.18.204.5",
         "account": "kol_jp_018",
         "fps": 28,
@@ -485,7 +466,7 @@ BROWSERS = [
         "name": "brw-de-fra-007",
         "status": BrowserStatus.idle,
         "group": "eu-ads",
-        "fingerprint": "fp-win10-c126",
+        "fingerprint": "fp-fpcr-win10",
         "ip": "45.132.88.19",
         "account": "ads_de_007",
         "fps": 0,
@@ -498,7 +479,7 @@ BROWSERS = [
         "name": "brw-sg-sin-031",
         "status": BrowserStatus.error,
         "group": "sea-store",
-        "fingerprint": "fp-android-c128",
+        "fingerprint": "fp-cloak-android",
         "ip": "27.124.9.140",
         "account": "store_sg_031",
         "fps": None,
@@ -512,7 +493,7 @@ BROWSERS = [
         "name": "brw-hk-hkg-025",
         "status": BrowserStatus.running,
         "group": "apac-content",
-        "fingerprint": "fp-macos-safari",
+        "fingerprint": "fp-cloak-ios",
         "ip": "61.8.212.44",
         "account": "media_hk_025",
         "fps": 36,
@@ -525,7 +506,7 @@ BROWSERS = [
         "name": "brw-uk-lon-014",
         "status": BrowserStatus.running,
         "group": "eu-store",
-        "fingerprint": "fp-win11-c128uk",
+        "fingerprint": "fp-fpcr-android",
         "ip": "81.44.197.62",
         "account": "shop_uk_014",
         "fps": 30,
@@ -538,7 +519,7 @@ BROWSERS = [
         "name": "brw-ca-tor-009",
         "status": BrowserStatus.stopped,
         "group": "na-store",
-        "fingerprint": "fp-win11-c128ca",
+        "fingerprint": "fp-fpcr-macos",
         "ip": "23.129.64.131",
         "account": "shop_ca_003",
         "fps": None,
@@ -551,8 +532,11 @@ BROWSERS = [
         "name": "brw-au-syd-011",
         "status": BrowserStatus.queued,
         "group": "apac-content",
-        # 直连 + 默认指纹：排队阶段还没分配代理与模板，先用本机 IP 与原生指纹跑通
+        # 直连 + 默认指纹：排队阶段还没分配代理与模板，先用本机 IP 与原生指纹跑通。
+        # 内核固定成 Camoufox —— 它不做指纹注入，正好是「原生指纹」该落的地方；
+        # 否则这个内核在新矩阵下连一台实例都没有，卡片上看着像坏了。
         "fingerprint": None,
+        "kernel": "Camoufox",
         "ip": None,
         "account": None,
         "fps": None,
@@ -691,14 +675,19 @@ async def seed(session: AsyncSession, *, reset: bool = False) -> dict[str, int]:
         fingerprint = fingerprints.get(payload.pop("fingerprint"))
         ip = ips.get(payload.pop("ip"))
         account = accounts.get(payload.pop("account"))
-        assigned_kernel = next(
-            (
-                k
-                for k in kernels.values()
-                if k.id == (fingerprint.kernel_id if fingerprint else None)
-            ),
-            primary_kernel,
-        )
+        # 内核默认跟着指纹走；条目写了 kernel 就以它为准（没有指纹的实例要自己指定）
+        explicit_kernel = payload.pop("kernel", None)
+        if explicit_kernel:
+            assigned_kernel = kernels[explicit_kernel]
+        else:
+            assigned_kernel = next(
+                (
+                    k
+                    for k in kernels.values()
+                    if k.id == (fingerprint.kernel_id if fingerprint else None)
+                ),
+                primary_kernel,
+            )
         browser = Browser(
             **payload,
             group_id=group.id,
@@ -844,7 +833,7 @@ AUDIT_SAMPLES = [
         "action": AuditAction.start,
         "resource_type": AuditResourceType.browser,
         "browser": "brw-jp-tokyo-018",
-        "detail": "调度器拉起实例，指纹模板 fp-macos-c128 注入完成",
+        "detail": "调度器拉起实例，指纹模板 fp-cloak-macos 注入完成",
         "request_id": "c0e8a552",
         "occurred_at": _ago(minutes=45),
         "duration_ms": 1876,

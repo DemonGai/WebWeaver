@@ -251,14 +251,23 @@ def _short_platform(platform: str) -> str:
     return platform.split()[0] if platform else "未知"
 
 
-def _code_suffix(code: str) -> str:
-    """fp-win11-c128 → C128、fp-macos-safari → Safari，实例列表里当短标识用。"""
-    if "-" not in code:
+def _code_suffix(code: str, platform: str) -> str:
+    """fp-win11-c128 → C128、fp-cloak-win11 → Cloak，实例列表里当短标识用。
+
+    默认取最后一段，但它可能跟平台名撞：`fp-cloak-win11` 配「Windows 11」会显示成
+    「Win11 / Win11」。撞了就往前退一段——按现在的命名约定，退出来的是内核缩写，
+    正好能区分「同平台、不同内核」的两条模板。
+    """
+    segments = [segment for segment in code.split("-") if segment]
+    if not segments:
         return code
-    segment = code.rsplit("-", 1)[-1]
-    if re.fullmatch(r"c\d+\w*", segment, re.IGNORECASE):
-        return segment.upper()
-    return segment.capitalize()
+    short_platform = _short_platform(platform).replace(" ", "").lower()
+    for segment in reversed(segments[1:]):
+        if re.fullmatch(r"c\d+\w*", segment, re.IGNORECASE):
+            return segment.upper()
+        if segment.replace(" ", "").lower() != short_platform:
+            return segment.capitalize()
+    return segments[-1].capitalize()
 
 
 def _fingerprint_label(
@@ -267,7 +276,8 @@ def _fingerprint_label(
     """默认模式是正常状态，不能显示成「未绑定」。"""
     if fingerprint is None:
         return "默认指纹" if mode is FingerprintMode.default else "未绑定指纹"
-    return f"{_short_platform(fingerprint.platform)} / {_code_suffix(fingerprint.code)}"
+    platform = _short_platform(fingerprint.platform)
+    return f"{platform} / {_code_suffix(fingerprint.code, fingerprint.platform)}"
 
 
 def _ip_label(ip: Ip | None, mode: IpBindingMode = IpBindingMode.proxy) -> str:

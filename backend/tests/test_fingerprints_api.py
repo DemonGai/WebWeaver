@@ -138,7 +138,9 @@ def _row_of(body: dict[str, Any], fingerprint_id: str) -> dict[str, Any]:
 # ── 列表 ─────────────────────────────────────────────────
 
 
-def test_list_marks_kernels_that_cannot_spoof(api: TestClient) -> None:
+def test_list_marks_kernels_that_cannot_spoof(
+    api: TestClient, legacy_on_unsupported_kernel: str
+) -> None:
     body = api.get("/api/fingerprints").json()
 
     assert body["total"] == len(body["templates"])
@@ -146,11 +148,12 @@ def test_list_marks_kernels_that_cannot_spoof(api: TestClient) -> None:
     assert body["supported_kernels"] == 2
     assert body["kernels"] == 4
 
-    # 种子里有绑到 Camoufox 的模板，必须被标成不支持且给出原因
-    camo = [item for item in body["templates"] if item["kernel_slug"] == "camoufox"]
-    assert camo, "种子里应该有绑到 Camoufox 的指纹"
-    assert all(item["supported"] is False for item in camo)
-    assert all(item["unsupported_reason"] for item in camo)
+    # 绑在做不了指纹的内核上的模板，必须被标成不支持并给出原因。
+    # 样本由 fixture 现造：种子里的八条是矩阵摆法，不保证有这种组合，
+    # 「不支持」的展示不该随种子摆法一起变。
+    legacy = _row_of(body, legacy_on_unsupported_kernel)
+    assert legacy["supported"] is False
+    assert legacy["unsupported_reason"]
 
 
 def test_list_reports_probe_state(api: TestClient) -> None:

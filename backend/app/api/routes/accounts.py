@@ -9,6 +9,6 @@ from app.services.cluster import Snapshot, get_snapshot
 router = APIRouter(tags=["accounts"])
 
 
-@router.get("/accounts", response_model=AccountPoolPayload, summary="账号池列表")
+@router.get("/accounts", response_model=AccountPoolPayload, summary="账号管理列表")
 async def get_accounts(snapshot: Annotated[Snapshot, Depends(get_snapshot)]) -> AccountPoolPayload:
     return cluster.accounts(snapshot)

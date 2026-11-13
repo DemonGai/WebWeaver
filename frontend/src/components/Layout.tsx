@@ -15,7 +15,7 @@ import {
 const NAV = [
   { to: '/', label: '总览', icon: IconOverview, end: true },
   { to: '/browsers', label: '浏览器池', icon: IconBrowser },
-  { to: '/accounts', label: '账号池', icon: IconUser },
+  { to: '/accounts', label: '账号管理', icon: IconUser },
   { to: '/ip-pool', label: '代理管理', icon: IconGlobe },
   { to: '/fingerprints', label: '指纹管理', icon: IconFingerprint },
   { to: '/kernels', label: '内核管理', icon: IconKernel },

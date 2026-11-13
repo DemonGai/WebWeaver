@@ -675,7 +675,7 @@ def browsers(snapshot: Snapshot) -> BrowserPoolPayload:
     )
 
 
-# ── 账号池 ─────────────────────────────────────────────────
+# ── 账号管理 ─────────────────────────────────────────────────
 
 
 def _account_card(account: Account, snapshot: Snapshot) -> AccountCard:

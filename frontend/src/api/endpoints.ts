@@ -112,7 +112,7 @@ export const endpoints = {
     }),
   installJob: (id: string) => api.get<InstallJob>(`/kernels/jobs/${id}`),
 
-  /* 头像菜单 + 个人中心（当前登录成员，非浏览器账号池） */
+  /* 头像菜单 + 个人中心（当前登录成员，非浏览器账号管理） */
   userMenu: () => api.get<UserMenuPayload>('/user/menu'),
   profile: () => api.get<ProfilePayload>('/user/profile'),
   updateProfile: (body: { display_name: string }) =>

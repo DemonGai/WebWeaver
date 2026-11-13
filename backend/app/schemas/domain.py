@@ -169,7 +169,7 @@ class BrowserPoolPayload(BaseModel):
     filters: list[FilterItem]
 
 
-# ── 账号池 ──────────────────────────────────────────────
+# ── 账号管理 ──────────────────────────────────────────────
 class AccountTotals(BaseModel):
     total: int
     health: float

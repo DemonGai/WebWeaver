@@ -1,6 +1,6 @@
 """个人中心（头像浮层 + 个人信息 / 安全 / 设备）的接口模型。
 
-这里的 "user" 指控制台成员（``users`` 表），不是浏览器账号池（``accounts`` 表）——
+这里的 "user" 指控制台成员（``users`` 表），不是浏览器账号管理（``accounts`` 表）——
 后者的模型在 ``schemas/domain.py`` 的 ``AccountCard`` / ``AccountPoolPayload``。
 
 从 ``schemas/kernels.py`` 把 ``MenuRow`` / ``UserMenuPayload`` 搬过来：它们描述的

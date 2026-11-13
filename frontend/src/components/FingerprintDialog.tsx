@@ -11,11 +11,41 @@ import type {
   PlatformFamily,
 } from '@/types/domain'
 
-const FAMILIES: { value: PlatformFamily; label: string }[] = [
+/**
+ * 可选平台只留四个：两个桌面族 + 两个移动族。
+ * Linux 桌面不提供 —— 指纹库里没有、筛选栏也没有，露出来只会让人建出一个
+ * 在「全部」以外任何标签页都看不到的模板。库里若有历史 linux 模板，
+ * 编辑时会把当前值临时补回下拉（见 platformOptions）。
+ */
+const FAMILIES: { value: PlatformFamily; label: string; hint?: string }[] = [
   { value: 'windows', label: 'Windows' },
   { value: 'macos', label: 'macOS' },
-  { value: 'linux', label: 'Linux' },
+  { value: 'android', label: 'Android', hint: '伪移动' },
+  { value: 'ios', label: 'iOS', hint: '伪移动' },
 ]
+
+const FAMILY_LABELS: Record<PlatformFamily, string> = {
+  windows: 'Windows',
+  macos: 'macOS',
+  linux: 'Linux',
+  android: 'Android',
+  ios: 'iOS',
+}
+
+/** 移动族底下实际跑的是桌面内核的哪一族人格：android→linux、ios→macos。 */
+const PSEUDO_HOST: Record<string, string> = {
+  android: 'Linux',
+  ios: 'macOS',
+}
+
+/** 平台版本的占位值，跟着平台走，省得对着 Android 填 10.0.0。 */
+const VERSION_PLACEHOLDER: Record<PlatformFamily, string> = {
+  windows: '10.0.0',
+  macos: '14.5.0',
+  linux: '6.8.0',
+  android: '13.0.0',
+  ios: '17.5.0',
+}
 
 /** 常用时区，只是给输入框做提示，用户仍然可以手填任意 IANA 名。 */
 const TIMEZONES = [
@@ -69,6 +99,22 @@ export function FingerprintDialog({
     form.seed != null &&
     seedRange != null &&
     (form.seed < seedRange[0] || form.seed > seedRange[1])
+
+  const family = form.platform_family ?? 'windows'
+  /** 移动族 → 实际承载它的桌面族；null 表示这是真平台。 */
+  const pseudoHost = PSEUDO_HOST[family] ?? null
+  // 历史 linux 模板不在 FAMILIES 里，编辑时得把当前值补回去，否则下拉显示空白
+  const platformOptions = useMemo(() => {
+    const opts: { value: string; label: string; hint?: string }[] = FAMILIES.map((item) => ({
+      value: item.value as string,
+      label: item.label,
+      hint: item.hint,
+    }))
+    if (!FAMILIES.some((item) => item.value === family)) {
+      opts.push({ value: family, label: FAMILY_LABELS[family] })
+    }
+    return opts
+  }, [family])
 
   const randomize = () => {
     // 和后端 `PORTABLE_SEED_RANGE` 对齐：10000–99999，这个区间两个内核都收
@@ -152,12 +198,20 @@ export function FingerprintDialog({
 
           <Field label="平台">
             <SelectField
-              value={form.platform_family ?? 'windows'}
+              value={family}
               onChange={(v) => set('platform_family', v as PlatformFamily)}
-              options={FAMILIES.map((item) => ({ value: item.value, label: item.label }))}
+              options={platformOptions}
             />
           </Field>
         </div>
+
+        {pseudoHost && (
+          <Hint tone="amber">
+            伪移动：UA / 视口 / DPR 按 {FAMILY_LABELS[family]} 下发，
+            navigator.platform、Client Hints、TLS 仍然是 {pseudoHost} 桌面。
+            骗得过只看 UA 的站点，骗不过带风控的。
+          </Hint>
+        )}
 
         {active == null && (
           <Hint tone="zinc">
@@ -252,7 +306,7 @@ export function FingerprintDialog({
                         className="h-11 w-full rounded-xl border border-[var(--line)] bg-white px-3.5 text-[13px] outline-none focus:border-[#18181b]"
                         value={form.platform_version ?? ''}
                         onChange={(e) => set('platform_version', e.target.value || null)}
-                        placeholder="10.0.0"
+                        placeholder={VERSION_PLACEHOLDER[family]}
                       />
                     </Field>
                   )}
@@ -326,11 +380,19 @@ function initForm(
   }
 }
 
-function Hint({ tone, children }: { tone: 'rose' | 'zinc'; children: React.ReactNode }) {
+function Hint({
+  tone,
+  children,
+}: {
+  tone: 'rose' | 'zinc' | 'amber'
+  children: React.ReactNode
+}) {
   const style =
     tone === 'rose'
       ? 'border-rose-200 bg-rose-50 text-rose-700'
-      : 'border-[var(--line)] bg-[#fcfcfd] text-[var(--ink-500)]'
+      : tone === 'amber'
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-[var(--line)] bg-[#fcfcfd] text-[var(--ink-500)]'
   return (
     <div className={`flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-[11.5px] ${style}`}>
       <span className="mt-0.5 shrink-0">

@@ -3,8 +3,7 @@ import OverviewPage from './pages/OverviewPage'
 import BrowserPoolPage from './pages/BrowserPoolPage'
 import AccountsPage from './pages/AccountsPage'
 import IpPoolPage from './pages/IpPoolPage'
-import NoVncPage from './pages/NoVncPage'
-import NoVncListPage from './pages/NoVncListPage'
+import NoVncConsolePage from './pages/NoVncConsolePage'
 import FingerprintsPage from './pages/FingerprintsPage'
 import KernelsPage from './pages/KernelsPage'
 import KernelDetailPage from './pages/KernelDetailPage'
@@ -33,8 +32,9 @@ export default function App() {
           <Route path="/browsers" element={<BrowserPoolPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route path="/ip-pool" element={<IpPoolPage />} />
-          <Route path="/novnc" element={<NoVncListPage />} />
-          <Route path="/novnc/:id" element={<NoVncPage />} />
+          {/* 左右分栏控制台：/novnc 自动落到一台可接管的，/novnc/:id 指定实例 */}
+          <Route path="/novnc" element={<NoVncConsolePage />} />
+          <Route path="/novnc/:id" element={<NoVncConsolePage />} />
           <Route path="/fingerprints" element={<FingerprintsPage />} />
           <Route path="/kernels" element={<KernelsPage />} />
           <Route path="/kernels/:slug" element={<KernelDetailPage />} />

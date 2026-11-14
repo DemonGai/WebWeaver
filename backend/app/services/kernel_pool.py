@@ -17,9 +17,11 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import HTTPException, Request, status
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import SessionLocal
 from app.models import (
     AuditAction,
     AuditResourceType,
@@ -383,6 +385,48 @@ async def switch_version(
         await session.commit()
 
     return await payload(session)
+
+
+async def adopt_pulled(slug: str, version: str) -> None:
+    """拉完镜像后把台账拉回事实。
+
+    种子数据里的版本号是写死的旧值（128 / 126 / 124），而实际拉下来的镜像往往是
+    新版本（146 / 148 / 156）。台账只要还指着本地不存在的版本，新建实例就会一直
+    撞上「本地没有这个版本的镜像」。所以拉取成功后，若登记版本已经悬空，就改记
+    成当前最新的已装版本；登记版本仍然装着时不动——那可能是用户特意选的旧版本。
+    """
+    if not version or version == "latest":
+        return
+    images, ok, _ = await _load_images()
+    if not ok:
+        return
+
+    async with SessionLocal() as session:
+        kernels = (await session.scalars(select(Kernel))).all()
+        for kernel in kernels:
+            if engine_slug(kernel.name) != slug:
+                continue
+            installed = kernel_scan.scan_versions(kernel.name, images=images)
+            names = {item.version for item in installed}
+            if not names or kernel.version in names:
+                return
+            current = _pick_current(installed, kernel.version)
+            if current is None:
+                return
+            before = kernel.version
+            kernel.version = current.version
+            latest = kernel.latest_version
+            if latest is None or version_key(current.version) > version_key(latest):
+                kernel.latest_version = current.version
+            await session.commit()
+            logger.info(
+                "{} 登记的版本 {} 本地已不存在，台账改为 {}（拉取 {} 后校正）",
+                kernel.name,
+                before,
+                current.version,
+                version,
+            )
+            return
 
 
 async def migrate(

@@ -18,7 +18,7 @@ from app.api.deps import get_current_user
 from app.core.db import SessionLocal, dispose
 from app.main import app
 from app.models import Browser, Kernel, User
-from app.services import kernel_image
+from app.services import kernel_image, kernel_pool
 from app.services.kernel_image import ImageInfo
 
 client = TestClient(app)
@@ -114,6 +114,17 @@ def _pin_versions(mapping: dict[str, str]) -> None:
         await dispose()
 
     _run(run())
+
+
+def _version_of(name: str) -> str | None:
+    async def run() -> str | None:
+        async with SessionLocal() as session:
+            row = await session.scalar(select(Kernel).where(Kernel.name == name))
+            version = row.version if row is not None else None
+        await dispose()
+        return version
+
+    return _run(run())
 
 
 def _make_browsers(kernel_name: str, version: str, count: int = 2) -> list[str]:
@@ -388,3 +399,24 @@ def test_install_resolves_reference(kernel_images: None, monkeypatch: pytest.Mon
     job = res.json()
     assert job["image_ref"].endswith(":cloakbrowser-128.0.6613.5")
     assert job["kind"] == "docker"
+
+
+# ── 拉取镜像后校正台账 ────────────────────────────────────────
+
+
+def test_adopt_pulled_repoints_dangling_version(kernel_images: None) -> None:
+    """台账指着一个本地不存在的版本时，拉完镜像把它改记成实际的版本。"""
+    _pin_versions({"CloakBrowser": "99.0.0"})
+
+    _run(kernel_pool.adopt_pulled("cloakbrowser", "128.0.6613.5"))
+
+    assert _version_of("CloakBrowser") == "128.0.6613.5"
+
+
+def test_adopt_pulled_keeps_installed_version(kernel_images: None) -> None:
+    """台账版本还在本地：那是用户选的，拉个新镜像不许悄悄改掉。"""
+    _pin_versions({"CloakBrowser": "128.0.6613.2"})
+
+    _run(kernel_pool.adopt_pulled("cloakbrowser", "128.0.6613.5"))
+
+    assert _version_of("CloakBrowser") == "128.0.6613.2"

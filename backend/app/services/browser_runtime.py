@@ -22,6 +22,8 @@ import asyncio
 import shlex
 from uuid import UUID
 
+from loguru import logger
+
 from app.models import Ip, Kernel
 from app.services import fingerprint_apply, kernel_image, kernel_scan
 from app.services.fingerprint_caps import FingerprintSpec, KernelCaps
@@ -76,7 +78,13 @@ def proxy_argument(ip: Ip | None) -> str | None:
 
 
 def resolve_image(kernel: Kernel, version: str | None) -> str:
-    """实例要跑的镜像。固定 tag 优先，找不到就报清楚缺哪个版本。"""
+    """实例要跑的镜像。固定 tag 优先，找不到就报清楚缺哪个版本。
+
+    ``version`` 为空表示「跟随内核当前版本」。这种情况下若台账登记的版本本地
+    没有镜像（种子数据里的版本号往往比实际拉取的旧），就退到最新可用镜像 ——
+    与内核管理页「当前版本」的判定同口径，否则页面显示 156、启动却报缺 124。
+    实例明确钉了某个版本时不退：那是用户的选择，缺了就该说缺。
+    """
     try:
         images = kernel_image.list_images(kernel_scan.registry())
     except kernel_image.DockerError as exc:
@@ -94,6 +102,14 @@ def resolve_image(kernel: Kernel, version: str | None) -> str:
     for item in versions:
         if item.version == wanted:
             return item.image_ref
+    if version is None:
+        logger.warning(
+            "{} 登记的当前版本 {} 本地没有镜像，本次按最新镜像 {} 启动",
+            kernel.name,
+            wanted,
+            versions[0].version,
+        )
+        return versions[0].image_ref
     available = "、".join(item.version for item in versions[:4])
     raise ContainerError(
         f"{kernel.name} 本地没有 {wanted} 版本的镜像（现有：{available}），"

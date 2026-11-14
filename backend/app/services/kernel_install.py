@@ -19,7 +19,7 @@ from datetime import datetime
 from loguru import logger
 
 from app.schemas.kernels import InstallJob
-from app.services import browser_novnc, kernel_image, kernel_scan
+from app.services import browser_novnc, kernel_image, kernel_pool, kernel_scan
 from app.services.kernel_image import DockerError
 
 MAX_JOBS = 20
@@ -146,6 +146,12 @@ async def _run(item: InstallJob) -> None:
     item.finished_at = _now()
     # 同一个 tag 可能被重新构建过，noVNC 能力判定不能继续用旧镜像的结论
     browser_novnc.forget(item.image_ref)
+    # 台账跟随事实：种子里的旧版本号如果本地根本没有镜像，改记成刚拉的这个，
+    # 否则之后新建的实例会一直卡在「本地没有这个版本的镜像」
+    try:
+        await kernel_pool.adopt_pulled(item.slug, item.version)
+    except Exception:  # noqa: BLE001 - 校正失败不该把成功的拉取标成失败
+        logger.exception("校正内核台账失败 {}", item.image_ref)
     logger.info("镜像就绪 {}（{}）", item.image_ref, item.message)
 
 

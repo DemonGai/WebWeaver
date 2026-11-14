@@ -75,6 +75,7 @@ def fake_local_images(monkeypatch: pytest.MonkeyPatch) -> None:
 CONTAINER_CALLS: list[tuple[str, str, dict]] = []
 # 解析 docker 输出这类用例要绕过下面的 fixture，先留一份真实现
 _REAL_PUBLISHED_PORTS = browser_runtime.published_ports
+_REAL_RESOLVE_IMAGE = browser_runtime.resolve_image
 
 
 @pytest.fixture(autouse=True)
@@ -835,3 +836,31 @@ def test_start_reuses_stopped_container_ports(monkeypatch: pytest.MonkeyPatch) -
     assert _actions(item["id"], "start", token).status_code == 200
     again = client.get(f"/api/browsers/{item['id']}").json()["vnc_port"]
     assert again == first
+
+
+# ── 镜像解析：台账版本悬空时退到最新 ────────────────────────────
+
+
+def test_resolve_image_falls_back_when_ledger_dangles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """种子里的旧版本号本地没镜像、实例又没钉版本：按最新镜像启动，别直接失败。"""
+    monkeypatch.setattr(browser_runtime, "resolve_image", _REAL_RESOLVE_IMAGE)
+    kernel = Kernel(name="CloakBrowser", version="999.0.0")
+
+    ref = browser_runtime.resolve_image(kernel, None)
+
+    assert ref == "demo/browser_engine:cloakbrowser-128.0.6613.5"
+
+
+def test_resolve_image_rejects_missing_pinned_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """实例明确钉了某版本，缺就是缺——不能悄悄换一个版本跑。"""
+    monkeypatch.setattr(browser_runtime, "resolve_image", _REAL_RESOLVE_IMAGE)
+    kernel = Kernel(name="CloakBrowser", version="128.0.6613.5")
+
+    with pytest.raises(browser_runtime.ContainerError) as excinfo:
+        browser_runtime.resolve_image(kernel, "999.0.0")
+
+    assert "999.0.0" in str(excinfo.value)

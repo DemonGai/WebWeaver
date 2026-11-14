@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { useApi } from '@/hooks/useApi'
+import { copyText } from '@/lib/clipboard'
 import { PageHeader, PageShell } from '@/components/Layout'
 import { Card, Checkbox, PillTabs, SearchInput, type Tone } from '@/components/ui'
 import { StatTile } from '@/components/StatTile'
@@ -181,7 +182,13 @@ export default function BrowserPoolPage() {
     }
   }
 
-  const removeInstance = async (item: InstanceSummary) => {    try {
+  const copyInstanceId = async (item: InstanceSummary) => {
+    const ok = await copyText(item.id)
+    notify(ok ? 'ok' : 'err', ok ? `已复制实例 ID ${item.id}` : '复制失败，请手动选中 ID')
+  }
+
+  const removeInstance = async (item: InstanceSummary) => {
+    try {
       await endpoints.deleteBrowser(item.id)
       notify('ok', `实例 ${item.name} 已删除`)
       setConfirming(null)
@@ -403,6 +410,7 @@ export default function BrowserPoolPage() {
               onAction={(action) => runAction(it.id, action)}
               onConfigure={() => setDialog({ open: true, id: it.id })}
               onDuplicate={() => duplicateInstance(it)}
+              onCopyId={() => copyInstanceId(it)}
               onDelete={() => setConfirming(it)}
             />
           ))}
@@ -565,6 +573,7 @@ function InstanceCard({
   onAction,
   onConfigure,
   onDuplicate,
+  onCopyId,
   onDelete,
 }: {
   item: InstanceSummary
@@ -576,6 +585,7 @@ function InstanceCard({
   onAction: (action: BrowserActionName) => void
   onConfigure: () => void
   onDuplicate: () => void
+  onCopyId: () => void
   onDelete: () => void
 }) {
   const [menu, setMenu] = useState(false)
@@ -614,8 +624,22 @@ function InstanceCard({
               className="mt-[3px]"
             />
             <div className="min-w-0">
-              <div className="truncate text-[13.5px] font-semibold tracking-tight text-[var(--ink-900)]">
-                {item.name}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span
+                  className="truncate text-[13.5px] font-semibold tracking-tight text-[var(--ink-900)]"
+                  title={item.name}
+                >
+                  {item.name}
+                </span>
+                {/* ID 太长（UUID 36 位），卡片上只露前 8 位；点一下复制完整 ID */}
+                <button
+                  type="button"
+                  onClick={onCopyId}
+                  title={`${item.id}\n点击复制完整 ID`}
+                  className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[#f7f7f8] px-1 py-px font-mono text-[10px] leading-[14px] text-[var(--ink-500)] transition-colors hover:border-[#d9d9e0] hover:bg-[#f0f0f2] hover:text-[var(--ink-700)]"
+                >
+                  {item.id.slice(0, 8)}
+                </button>
               </div>
               {/* 状态已经在右上角 chip 里了，这里只在 note 讲的是别的事时才补一句 */}
               <div className="mt-1 truncate text-[11px] text-[var(--ink-400)]">

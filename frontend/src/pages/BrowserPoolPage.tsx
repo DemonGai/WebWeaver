@@ -492,10 +492,12 @@ export default function BrowserPoolPage() {
                         </span>
                         <IdBadge id={it.id} onCopy={() => copyInstanceId(it)} />
                       </div>
-                      <div className="mt-0.5 text-[10.5px] text-[var(--ink-400)]">
-                        {/* 备注常常就是状态文案（如「已停止」），跟左边 chip 重了就留空 */}
-                        {it.note && it.note !== meta[it.status].label ? it.note : '—'}
-                      </div>
+                      {/* 备注常常就是状态文案（如「已停止」），跟左边 chip 重了、或者压根没填，就不占这行 */}
+                      {it.note && it.note !== meta[it.status].label && (
+                        <div className="mt-0.5 truncate text-[10.5px] text-[var(--ink-400)]">
+                          {it.note}
+                        </div>
+                      )}
                     </td>
                     <td className="table-td">
                       <span className={`chip ${statusChip[it.status]}`}>
@@ -509,7 +511,13 @@ export default function BrowserPoolPage() {
                         {it.ip} · {it.region}
                       </div>
                     </td>
-                    <td className="table-td text-[11.5px]">{it.fingerprint}</td>
+                    <td className="table-td">
+                      {/* 与卡片同一个琥珀色 chip，一眼能看出这条是套了模板还是默认 */}
+                      <span className="chip max-w-[168px] bg-amber-50 text-amber-600">
+                        <IconFingerprint size={10} className="shrink-0" />
+                        <span className="min-w-0 truncate">{it.fingerprint}</span>
+                      </span>
+                    </td>
                     <td className="table-td text-[11.5px]">{it.group}</td>
                     <td className="table-td">
                       <div className="flex items-center justify-end gap-1.5">

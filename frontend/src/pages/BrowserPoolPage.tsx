@@ -460,13 +460,13 @@ export default function BrowserPoolPage() {
                 const busyNow = busy.includes(it.id)
                 // 最后一行向下弹会顶到页面底，改成向上展开
                 const menuUp = idx === visible.length - 1
-                // 与卡片同一套判定：idle 也已经起来了，主操作就该是接管画面
+                // 与卡片同一套判定：idle 也已经起来了，主按钮就该是停止
                 const running = it.status === 'running' || it.status === 'idle'
                 const primary = running
                   ? {
-                      label: '打开 noVNC',
-                      icon: <IconMonitor size={11} />,
-                      run: () => navigate('/novnc/' + it.id),
+                      label: '停止实例',
+                      icon: <IconPower size={11} />,
+                      run: () => runAction(it.id, 'stop'),
                     }
                   : it.status === 'error'
                     ? {
@@ -531,10 +531,21 @@ export default function BrowserPoolPage() {
                           type="button"
                           disabled={busyNow}
                           onClick={primary.run}
-                          className="btn-dark !h-7 !px-2.5 !text-[11px] disabled:opacity-60"
+                          className={`!h-7 !px-2.5 !text-[11px] disabled:opacity-60 ${
+                            running ? 'btn-ghost' : 'btn-dark'
+                          }`}
                         >
                           {busyNow ? <IconRefresh size={11} /> : primary.icon}
                           {busyNow ? '处理中…' : primary.label}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate('/novnc/' + it.id)}
+                          title="在 noVNC 里接管这台实例的画面"
+                          className="btn-ghost !h-7 !px-2.5 !text-[11px]"
+                        >
+                          <IconMonitor size={11} />
+                          noVNC
                         </button>
                         <button
                           type="button"
@@ -699,11 +710,12 @@ function InstanceCard({
 }) {
   const [menu, setMenu] = useState(false)
   const badge = meta[item.status]
-  // 已经起来的实例主操作一律是接管画面：noVNC 才是真正要干的事
   const running = item.status === 'running' || item.status === 'idle'
 
+  // 主按钮只管电源：起停是最常做的动作。noVNC 单独一颗常驻按钮，
+  // 免得运行 / 未运行两种状态下按钮含义变来变去、还和 noVNC 入口重名
   const primary = running
-    ? { label: '打开 noVNC', icon: <IconMonitor size={11} />, run: onOpen }
+    ? { label: '停止实例', icon: <IconPower size={11} />, run: () => onAction('stop') }
     : item.status === 'error'
       ? { label: '重新启动', icon: <IconRefresh size={11} />, run: () => onAction('restart') }
       : { label: '启动实例', icon: <IconPlay size={11} />, run: () => onAction('start') }
@@ -799,10 +811,22 @@ function InstanceCard({
               type="button"
               disabled={busy}
               onClick={primary.run}
-              className="btn-dark !h-7 !px-3 !text-[11.5px] disabled:opacity-60"
+              className={`!h-7 !px-3 !text-[11.5px] disabled:opacity-60 ${
+                running ? 'btn-ghost' : 'btn-dark'
+              }`}
             >
               {busy ? <IconRefresh size={11} /> : primary.icon}
               {busy ? '处理中…' : primary.label}
+            </button>
+            {/* 无论起没起来都能点：详情页自己会说「先启动」还是「镜像不带 noVNC」 */}
+            <button
+              type="button"
+              onClick={onOpen}
+              title="在 noVNC 里接管这台实例的画面"
+              className="btn-ghost !h-7 !px-3 !text-[11.5px]"
+            >
+              <IconMonitor size={11} />
+              noVNC
             </button>
             <button
               type="button"
@@ -813,19 +837,6 @@ function InstanceCard({
             </button>
           </div>
           <div className="flex items-center gap-1">
-            {/* 只在已经起来的时候给「停止」：没起来时主按钮就是启动，这里再来一个纯属重复 */}
-            {running && (
-              <button
-                type="button"
-                disabled={busy}
-                aria-label="停止实例"
-                title="停止实例"
-                onClick={() => onAction('stop')}
-                className="icon-btn size-7 !border-transparent !bg-transparent text-emerald-600 disabled:opacity-50"
-              >
-                <IconPower size={12} />
-              </button>
-            )}
             <div className="relative">
               <button
                 type="button"

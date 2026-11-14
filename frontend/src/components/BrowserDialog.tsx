@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { endpoints } from '@/api/endpoints'
 import { Modal } from '@/components/Modal'
 import { Select as SelectControl } from '@/components/Select'
-import { IconBolt, IconBrowser, IconCheck } from '@/components/icons'
+import { IconBolt, IconBrowser, IconCheck, IconInfo } from '@/components/icons'
 import { ApiError } from '@/api/client'
 import type { BrowserDetail, BrowserFormValues, BrowserOptions } from '@/types/domain'
 
@@ -12,8 +12,11 @@ import type { BrowserDetail, BrowserFormValues, BrowserOptions } from '@/types/d
  * 新建与编辑共用一个组件：字段完全一致，差别只在标题、初始值，以及
  * 提交时打哪个接口。拆成两个组件会让「加个字段」变成改两处。
  *
- * 下拉里把「直连（本机 IP）」与「默认指纹」作为一等选项列出来，而不是
- * 留一个空白的「请选择」——它们在数据模型里是正常取值，不是「没填」。
+ * 三条与后端对齐的规则：
+ * 1. 内核只列内核管理里 active 的（后端已过滤），停用的选不起来；
+ * 2. 内核带不带指纹补丁决定要不要显示「出口 IP / 指纹模板」——不带补丁的内核
+ *    收到指纹参数只会静默忽略，界面上摆着输入框等于骗人；
+ * 3. 实例名允许中文，作为业务唯一标识直接展示。
  */
 export function BrowserDialog({
   open,
@@ -35,13 +38,15 @@ export function BrowserDialog({
   const [submitting, setSubmitting] = useState(false)
   const [loading, setLoading] = useState(false)
 
-  // 每次打开都重新拉候选资源：别的标签页刚绑走一个账号，这里必须看到最新的占用状态
+  // 每次打开都重新拉候选资源：别的标签页刚绑走一个账号，这里必须看到最新的占用状态。
+  // 编辑时把实例 id 带上，后端才会把它当前绑的内核 / 代理留在候选里——否则那一条
+  // 一旦停用就从下拉里消失，用户改个备注保存下来资源就没了。
   useEffect(() => {
     if (!open) return
     setError(null)
     setLoading(true)
     Promise.all([
-      endpoints.browserOptions(),
+      endpoints.browserOptions(browserId ?? undefined),
       browserId ? endpoints.browserDetail(browserId) : Promise.resolve(null),
     ])
       .then(([opts, detail]) => {
@@ -49,7 +54,6 @@ export function BrowserDialog({
         if (detail) {
           setForm({
             name: detail.name,
-            group_id: detail.group_id,
             kernel_id: detail.kernel_id,
             kernel_version: detail.kernel_version,
             account_id: detail.account_id,
@@ -60,7 +64,6 @@ export function BrowserDialog({
         } else {
           setForm({
             name: '',
-            group_id: null,
             kernel_id: null,
             kernel_version: null,
             account_id: null,
@@ -78,6 +81,9 @@ export function BrowserDialog({
 
   // 归一化后端的 { kernel_id: [versions] }，只保留当前选中内核的已下载版本
   const kernelVersions = form.kernel_id ? (options?.kernel_versions[form.kernel_id] ?? []) : []
+  const kernel = options?.kernels.find((k) => k.id === form.kernel_id) ?? null
+  // 没选内核时同样不下发指纹：不知道按哪套参数算
+  const needsFingerprint = kernel?.supports_fingerprint ?? false
 
   const submit = async () => {
     const name = (form.name ?? '').trim()
@@ -85,21 +91,25 @@ export function BrowserDialog({
       setError('实例名至少 2 个字符')
       return
     }
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
-      setError('实例名只能包含字母、数字、点、下划线和短横线，且以字母或数字开头')
+    if (!/^[A-Za-z0-9\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff._\- ]*$/.test(name)) {
+      setError('实例名可用中文、字母、数字、点、下划线和短横线，且以中文或字母数字开头')
+      return
+    }
+    if (!form.kernel_id) {
+      setError('请选择内核')
       return
     }
 
     setSubmitting(true)
     setError(null)
     try {
+      // 不带指纹补丁的内核不提交出口与指纹：留着只会让人以为在伪装
       const body: BrowserFormValues = {
-        group_id: form.group_id ?? null,
-        kernel_id: form.kernel_id ?? null,
+        kernel_id: form.kernel_id,
         kernel_version: form.kernel_version ?? null,
         account_id: form.account_id ?? null,
-        ip_id: form.ip_id ?? null,
-        fingerprint_id: form.fingerprint_id ?? null,
+        ip_id: needsFingerprint ? (form.ip_id ?? null) : null,
+        fingerprint_id: needsFingerprint ? (form.fingerprint_id ?? null) : null,
         note: form.note?.trim() ? form.note.trim() : null,
       }
       const detail = editing
@@ -122,8 +132,8 @@ export function BrowserDialog({
       title={editing ? `配置 ${form.name || '实例'}` : '新建浏览器实例'}
       subtitle={
         editing
-          ? '绑定账号、出口 IP 与指纹模板；清空出口 IP 或指纹即切回直连与默认指纹'
-          : '实例建好后为停止状态，绑定好账号与出口再启动接管'
+          ? '绑定账号与内核；清空出口 IP 或指纹即切回直连与默认指纹'
+          : '实例建好后为停止状态，绑定好账号再启动接管'
       }
       footer={
         <>
@@ -133,7 +143,7 @@ export function BrowserDialog({
           <button
             type="button"
             onClick={submit}
-            disabled={submitting || loading}
+            disabled={submitting || loading || options?.kernels.length === 0}
             className="btn-dark !h-9 disabled:opacity-60"
           >
             {submitting ? '保存中…' : editing ? '保存配置' : '创建实例'}
@@ -145,33 +155,39 @@ export function BrowserDialog({
 
       {!loading && options && (
         <div className="pb-2">
-          <Field label="实例名称" hint="唯一标识，如 brw-us-west-043">
+          <Field label="实例名称" hint="唯一标识，可用中文">
             <input
               value={form.name ?? ''}
               onChange={(e) => patch({ name: e.target.value })}
-              placeholder="brw-us-west-043"
+              placeholder="例如 上海-01"
               className="h-9 w-full rounded-xl border border-[var(--line)] bg-white px-3 text-[12.5px] text-[var(--ink-900)] outline-none focus:border-[#d4d4d8]"
             />
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="分组">
-              <Select
-                value={form.group_id ?? ''}
-                onChange={(v) => patch({ group_id: v || null })}
-                placeholder="未分组"
-                options={options.groups}
-              />
-            </Field>
-            <Field label="内核">
-              <Select
-                value={form.kernel_id ?? ''}
-                onChange={(v) => patch({ kernel_id: v || null, kernel_version: null })}
-                placeholder="使用默认内核"
-                options={options.kernels}
-              />
-            </Field>
-          </div>
+          <Field label="内核" hint="只列内核管理里可用的内核">
+            <Select
+              value={form.kernel_id ?? ''}
+              onChange={(id) => {
+                const next = options.kernels.find((k) => k.id === id) ?? null
+                patch({
+                  kernel_id: id || null,
+                  kernel_version: null,
+                  // 换成不带指纹补丁的内核时，代理与指纹一起清掉：
+                  // 这两栏本来就是为指纹服务的，留着是没有下文的残留配置
+                  ...(next && !next.supports_fingerprint
+                    ? { ip_id: null, fingerprint_id: null }
+                    : {}),
+                })
+              }}
+              placeholder="选择内核"
+              options={options.kernels}
+            />
+            {options.kernels.length === 0 && (
+              <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+                内核管理里没有可用的内核，先去获取一个再回来建实例
+              </p>
+            )}
+          </Field>
 
           {kernelVersions.length > 0 && (
             <Field label="内核版本" hint="留空则跟随该内核当前版本">
@@ -179,7 +195,7 @@ export function BrowserDialog({
                 value={form.kernel_version ?? ''}
                 onChange={(v) => patch({ kernel_version: v || null })}
                 versions={kernelVersions}
-                current={options.kernels.find((k) => k.id === form.kernel_id)?.hint ?? ''}
+                current={kernel?.version ?? ''}
               />
             </Field>
           )}
@@ -193,24 +209,37 @@ export function BrowserDialog({
             />
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="出口 IP">
-              <Select
-                value={form.ip_id ?? ''}
-                onChange={(v) => patch({ ip_id: v || null })}
-                placeholder="直连（本机 IP）"
-                options={options.ips}
-              />
-            </Field>
-            <Field label="指纹模板">
-              <Select
-                value={form.fingerprint_id ?? ''}
-                onChange={(v) => patch({ fingerprint_id: v || null })}
-                placeholder="默认指纹（不套模板）"
-                options={options.fingerprints}
-              />
-            </Field>
-          </div>
+          {needsFingerprint ? (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="出口 IP">
+                <Select
+                  value={form.ip_id ?? ''}
+                  onChange={(v) => patch({ ip_id: v || null })}
+                  placeholder="直连（本机 IP）"
+                  options={options.ips}
+                />
+              </Field>
+              <Field label="指纹模板">
+                <Select
+                  value={form.fingerprint_id ?? ''}
+                  onChange={(v) => patch({ fingerprint_id: v || null })}
+                  placeholder="默认指纹（不套模板）"
+                  options={options.fingerprints}
+                />
+              </Field>
+            </div>
+          ) : (
+            <div className="mt-4 flex items-start gap-2 rounded-xl bg-[#fafafa] px-3.5 py-2.5 text-[11px] leading-relaxed text-[var(--ink-500)]">
+              <span className="mt-[1px] shrink-0 text-[var(--ink-400)]">
+                <IconInfo size={11} />
+              </span>
+              {kernel
+                ? `${kernel.label} 不带指纹补丁，不用设出口与指纹：${
+                    kernel.fingerprint_note || '套模板不会生效'
+                  }`
+                : '选好内核后，带指纹补丁的内核才需要设置出口 IP 与指纹模板'}
+            </div>
+          )}
 
           <Field label="备注">
             <input

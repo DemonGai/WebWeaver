@@ -42,6 +42,7 @@ from app.models import (
     IpBindingMode,
     IpStatus,
     Kernel,
+    KernelStatus,
     utcnow,
 )
 from app.schemas.browser import (
@@ -52,9 +53,11 @@ from app.schemas.browser import (
     BrowserOption,
     BrowserOptions,
     BrowserUpdate,
+    KernelOption,
 )
 from app.schemas.domain import InstanceStatus
-from app.services import audit, kernel_image, kernel_scan
+from app.services import audit, fingerprint_caps, kernel_image, kernel_scan
+from app.services.fingerprint_caps import KernelCaps
 
 # 端口只分配不监听：预留一段固定区间，取当前库里没被占用的最小号。
 # CDP 与 noVNC 的偏移（+3100）跟种子数据里的既有分配保持一致，方便对照日志
@@ -70,32 +73,55 @@ _STATUS_TEXT = {
     "queued": "排队中",
 }
 
+# 停用内核在下拉里要说明自己为什么是「例外」被留了下来
+_KERNEL_STATUS_TEXT = {
+    "active": "可用",
+    "testing": "测试中",
+    "deprecated": "已弃用",
+}
+
 
 # ── 读取 ───────────────────────────────────────────────────
 
 
-async def options(session: AsyncSession) -> BrowserOptions:
+async def options(session: AsyncSession, browser_id: str | None = None) -> BrowserOptions:
     """候选资源清单。
 
-    已被别的实例绑定的账号与 IP 标成 ``disabled`` 而不是直接过滤掉：
+    一、只给「现在真能用」的：内核只列 ``status=active`` 的，出口只列没被判失败的。
+    二、例外是当前实例自己已经绑上的那一条——编辑时它不能凭空消失，否则用户只是
+    改个备注，保存时也会把内核和代理一起改掉。所以按 ``browser_id`` 把当前值保回来。
+    三、已被别的实例绑定的账号与 IP 标成 ``disabled`` 而不是直接过滤掉：
     用户搜索某个账号却没找到时，会以为数据丢了；灰着并注明「已被 X 占用」
     才解释得清。
     """
+    current = await get_browser(session, browser_id) if browser_id else None
+    own_id = current.id if current else None
     browsers = list((await session.scalars(select(Browser))).all())
-    used_accounts = {b.account_id: b.name for b in browsers if b.account_id}
-    used_ips = {b.ip_id: b.name for b in browsers if b.ip_id}
+    # 自己占用的不算占用：编辑弹窗里当前绑的那条必须能继续选中
+    used_accounts = {b.account_id: b.name for b in browsers if b.account_id and b.id != own_id}
+    used_ips = {b.ip_id: b.name for b in browsers if b.ip_id and b.id != own_id}
 
     groups = list(
         (await session.scalars(select(Group).order_by(Group.sort_order, Group.name))).all()
     )
-    kernels = list((await session.scalars(select(Kernel).order_by(Kernel.name))).all())
+    # 停用的内核（testing / deprecated）不进下拉：选了也起不来，只会让人以为能用
+    kernels = [
+        k
+        for k in (await session.scalars(select(Kernel).order_by(Kernel.name))).all()
+        if k.status is KernelStatus.active or (current is not None and k.id == current.kernel_id)
+    ]
     accounts = list((await session.scalars(select(Account).order_by(Account.username))).all())
-    ips = list((await session.scalars(select(Ip).order_by(Ip.address))).all())
+    ips = [
+        ip
+        for ip in (await session.scalars(select(Ip).order_by(Ip.address))).all()
+        if ip.status is not IpStatus.failed
+        or (current is not None and ip.id == current.ip_id)
+    ]
     fingerprints = list(
         (await session.scalars(select(Fingerprint).order_by(Fingerprint.platform))).all()
     )
 
-    # 一次取全本地镜像，四个内核共用；docker 不可用时一律当「没有可选版本」，
+    # 一次取全本地镜像，几个内核共用；docker 不可用时一律当「没有可选版本」，
     # 新建实例走内核当前版本兜底，不能让下拉框把整个页面拖挂
     try:
         images = kernel_image.list_images(kernel_scan.registry())
@@ -104,10 +130,7 @@ async def options(session: AsyncSession) -> BrowserOptions:
 
     return BrowserOptions(
         groups=[BrowserOption(id=str(g.id), label=g.name, hint=g.code) for g in groups],
-        kernels=[
-            BrowserOption(id=str(k.id), label=k.name, hint=f"{k.engine} · {k.version}")
-            for k in kernels
-        ],
+        kernels=[_kernel_option(k) for k in kernels],
         # 只列本地确有镜像的版本；空列表时前端退回内核当前版本
         kernel_versions={
             str(k.id): [v.version for v in kernel_scan.scan_versions(k.name, images=images)]
@@ -127,7 +150,7 @@ async def options(session: AsyncSession) -> BrowserOptions:
                 id=str(ip.id),
                 label=ip.address,
                 hint=f"{ip.supplier} · {ip.region} · 延迟 {ip.latency_ms or '—'}ms",
-                disabled=ip.id in used_ips or ip.status is IpStatus.failed,
+                disabled=ip.id in used_ips,
             )
             for ip in ips
         ],
@@ -140,6 +163,48 @@ async def options(session: AsyncSession) -> BrowserOptions:
             for fp in fingerprints
         ],
     )
+
+
+def _caps_of(kernel: Kernel) -> KernelCaps:
+    """内核 → 指纹能力。判断依据必须是内核名对应的 slug，不能按 engine 猜——
+    同为 Chromium，ungoogled 就没打指纹补丁。"""
+    return fingerprint_caps.caps_for(kernel_scan.engine_slug(kernel.name))
+
+
+def _kernel_option(kernel: Kernel) -> KernelOption:
+    """内核记录 → 下拉项，顺带把「带不带指纹补丁」告诉前端。"""
+    caps = _caps_of(kernel)
+    hint = f"{kernel.engine} · {kernel.version}"
+    if kernel.status is not KernelStatus.active:
+        hint += f" · {_KERNEL_STATUS_TEXT.get(kernel.status.value, kernel.status.value)}"
+    return KernelOption(
+        id=str(kernel.id),
+        label=kernel.name,
+        hint=hint,
+        supports_fingerprint=caps.supported,
+        fingerprint_note=caps.reason or caps.note,
+        version=kernel.version,
+    )
+
+
+async def _ensure_fingerprint_capable(session: AsyncSession, kernel_id: UUID | None) -> None:
+    """内核不带指纹补丁时挡住「绑指纹」这个动作。
+
+    静默忽略参数是这个领域最容易骗人的地方：界面显示套了模板、实例里什么都没变。
+    宁可在写入时报错，也别让用户以为自己在伪装。
+    """
+    if kernel_id is None:
+        return
+    kernel = await session.get(Kernel, kernel_id)
+    if kernel is None:
+        return
+    caps = _caps_of(kernel)
+    if not caps.supported:
+        reason = caps.reason or "这个内核没有指纹补丁，套模板不会生效"
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{kernel.name} 不支持指纹：{reason}",
+        )
 
 
 async def get_browser(session: AsyncSession, browser_id: str) -> Browser:
@@ -221,6 +286,8 @@ async def create(
     account = await _require(session, Account, payload.account_id, "账号")
     ip = await _require(session, Ip, payload.ip_id, "出口 IP")
     await _require(session, Fingerprint, payload.fingerprint_id, "指纹模板")
+    if payload.fingerprint_id:
+        await _ensure_fingerprint_capable(session, payload.kernel_id)
     await _ensure_free(session, account=account, ip=ip)
 
     browser = Browser(
@@ -297,10 +364,24 @@ async def update(
         await _require(session, Group, payload.group_id, "分组")
         browser.group_id = payload.group_id
     if "kernel_id" in fields:
-        await _require(session, Kernel, payload.kernel_id, "内核")
+        kernel = await _require(session, Kernel, payload.kernel_id, "内核")
         browser.kernel_id = payload.kernel_id
         # 换引擎后旧版本号不再适用，回到「跟随内核当前版本」
         browser.kernel_version = None
+        # 换成不带指纹补丁的内核，旧模板就不再生效。留着只会让卡片写着「已套模板」
+        # 而实际什么都没下发——这种假象比没有更危险，所以顺手解绑并记流水。
+        if kernel is not None and browser.fingerprint_id and not _caps_of(kernel).supported:
+            stale_fp = await session.get(Fingerprint, browser.fingerprint_id)
+            if stale_fp:
+                await _bind_log(
+                    session,
+                    browser,
+                    fingerprint=stale_fp,
+                    operator=operator,
+                    action=BindingAction.unbind,
+                )
+            browser.fingerprint_id = None
+            browser.fingerprint_mode = FingerprintMode.default
     if "kernel_version" in fields:
         browser.kernel_version = payload.kernel_version
     if "note" in fields:
@@ -354,6 +435,8 @@ async def update(
             else None
         )
         new_fp = await _require(session, Fingerprint, payload.fingerprint_id, "指纹模板")
+        if new_fp is not None:
+            await _ensure_fingerprint_capable(session, browser.kernel_id)
         if old_fp:
             await _bind_log(
                 session,

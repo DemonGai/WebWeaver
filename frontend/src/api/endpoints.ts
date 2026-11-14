@@ -48,7 +48,12 @@ export const endpoints = {
     api.get<OverviewPayload>(`/overview?range=${range}`),
   browsers: () => api.get<BrowserPoolPayload>('/browsers'),
   /* 浏览器池写操作 */
-  browserOptions: () => api.get<BrowserOptions>('/browsers/options'),
+  browserOptions: (browserId?: string) =>
+    api.get<BrowserOptions>(
+      browserId
+        ? `/browsers/options?browser_id=${encodeURIComponent(browserId)}`
+        : '/browsers/options',
+    ),
   browserDetail: (id: string) => api.get<BrowserDetail>(`/browsers/${id}`),
   createBrowser: (body: BrowserFormValues & { name: string }) =>
     api.post<BrowserDetail>('/browsers', body),

@@ -194,9 +194,18 @@ export interface BrowserOption {
   disabled: boolean
 }
 
+/** 内核候选比普通选项多一项：它带不带指纹补丁，决定了要不要显示指纹与出口 */
+export interface KernelOption extends BrowserOption {
+  supports_fingerprint: boolean
+  /** 不支持时的理由，直接展示给用户 */
+  fingerprint_note: string
+  /** 当前部署版本 */
+  version: string
+}
+
 export interface BrowserOptions {
   groups: BrowserOption[]
-  kernels: BrowserOption[]
+  kernels: KernelOption[]
   /** 内核 id → 磁盘上已下载的版本（新到旧） */
   kernel_versions: Record<string, string[]>
   accounts: BrowserOption[]
@@ -259,7 +268,6 @@ export interface BrowserBatchResult {
 
 export interface BrowserFormValues {
   name?: string
-  group_id?: string | null
   kernel_id?: string | null
   kernel_version?: string | null
   account_id?: string | null

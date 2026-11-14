@@ -6,6 +6,7 @@
 
 import asyncio
 from collections.abc import Iterator
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,8 @@ from app.models import (
     BrowserAccountBinding,
     BrowserFingerprintBinding,
     BrowserIpBinding,
+    Kernel,
+    KernelStatus,
 )
 from app.services.seed import DEMO_PASSWORD
 
@@ -90,6 +93,19 @@ def _create(name: str, token: str, **extra) -> dict:
     return res.json()
 
 
+def _set_kernel_status(kernel_id: str, status: str) -> None:
+    """直接改库里的内核状态，用来模拟「这个内核后来被停用了」。"""
+
+    async def run() -> None:
+        async with SessionLocal() as session:
+            kernel = await session.get(Kernel, UUID(kernel_id))
+            assert kernel is not None
+            kernel.status = KernelStatus(status)
+            await session.commit()
+
+    asyncio.run(run())
+
+
 def _actions(browser_id: str, action: str, token: str):
     return client.post(
         f"/api/browsers/{browser_id}/actions",
@@ -115,6 +131,111 @@ def test_options_lists_candidates(seeded_database: None) -> None:
 
 def test_detail_unknown_returns_404(seeded_database: None) -> None:
     assert client.get("/api/browsers/not-a-real-instance").status_code == 404
+
+
+def test_options_only_active_kernels(seeded_database: None) -> None:
+    """下拉只列内核管理里可用的内核。
+
+    种子里 Camoufox / CloakBrowser 是 active，fingerprint-chromium 是 testing、
+    ungoogled-chromium 是 deprecated —— 后两个选了也起不来，不该出现在列表里。
+    """
+    body = client.get("/api/browsers/options").json()
+    names = [k["label"] for k in body["kernels"]]
+    assert "CloakBrowser" in names
+    assert "fingerprint-chromium" not in names
+    assert "ungoogled-chromium" not in names
+
+    # 指纹能力挂在选项上：前端据此决定要不要显示「出口 IP / 指纹模板」
+    cloak = next(k for k in body["kernels"] if k["label"] == "CloakBrowser")
+    camoufox = next(k for k in body["kernels"] if k["label"] == "Camoufox")
+    assert cloak["supports_fingerprint"] is True
+    assert camoufox["supports_fingerprint"] is False
+    assert camoufox["fingerprint_note"], "不支持时要给出理由，否则用户不知道为什么少了两栏"
+
+
+def test_fingerprint_rejected_on_kernel_without_patch(seeded_database: None) -> None:
+    """不带指纹补丁的内核绑指纹 → 422。
+
+    这种组合不会报错，只会静默忽略参数，界面上写着「已套模板」实际什么都没变；
+    宁可在写入时挡住，也别让人以为在伪装。
+    """
+    token = _login()
+    options = client.get("/api/browsers/options").json()
+    kernel = next(k for k in options["kernels"] if not k["supports_fingerprint"])
+    fingerprint = options["fingerprints"][0]
+
+    res = client.post(
+        "/api/browsers",
+        json={
+            "name": f"{TEST_PREFIX}fp",
+            "kernel_id": kernel["id"],
+            "fingerprint_id": fingerprint["id"],
+        },
+        headers=_auth(token),
+    )
+    assert res.status_code == 422
+    assert "不支持指纹" in res.json()["detail"]
+
+
+def test_chinese_instance_name(seeded_database: None) -> None:
+    """实例名允许中文：它是要给人看的业务标识，不是容器名。"""
+    token = _login()
+    name = f"{TEST_PREFIX}上海-01 店铺"
+    created = _create(name, token)
+    assert created["name"] == name
+    # 中文名同样能按名字查详情（前端路由里可能传名字）
+    assert client.get(f"/api/browsers/{name}", headers=_auth(token)).json()["id"] == created["id"]
+
+
+def test_options_keeps_current_kernel_for_edit(seeded_database: None) -> None:
+    """编辑弹窗要能看到实例当前绑的内核，哪怕它已经被停用。
+
+    否则用户只是改个备注，下拉里找不到当前值，保存时内核就被清空了。
+    """
+    token = _login()
+    options = client.get("/api/browsers/options").json()
+    kernel = next(k for k in options["kernels"] if k["supports_fingerprint"])
+    created = _create(f"{TEST_PREFIX}keep", token, kernel_id=kernel["id"])
+
+    _set_kernel_status(kernel["id"], "deprecated")
+    try:
+        body = client.get(f"/api/browsers/options?browser_id={created['id']}").json()
+        kept = [k for k in body["kernels"] if k["id"] == kernel["id"]]
+        assert kept, "当前实例绑的内核必须留在候选里"
+        assert "已弃用" in kept[0]["hint"], "停用的内核要说明自己为什么还在列表里"
+        # 别的实例照旧看不到它
+        other = client.get("/api/browsers/options").json()
+        assert all(k["id"] != kernel["id"] for k in other["kernels"])
+    finally:
+        _set_kernel_status(kernel["id"], "active")
+
+
+def test_switch_to_kernel_without_patch_drops_fingerprint(seeded_database: None) -> None:
+    """换到不带指纹补丁的内核时，旧模板自动解绑。
+
+    留着它会让卡片上一直写着「已套模板」，而实际下发时一个字都不会带上——
+    这种假象比没有更危险。
+    """
+    token = _login()
+    options = client.get("/api/browsers/options").json()
+    patchy = next(k for k in options["kernels"] if k["supports_fingerprint"])
+    plain = next(k for k in options["kernels"] if not k["supports_fingerprint"])
+
+    created = _create(
+        f"{TEST_PREFIX}switch",
+        token,
+        kernel_id=patchy["id"],
+        fingerprint_id=options["fingerprints"][0]["id"],
+    )
+    assert created["fingerprint_mode"] == "template"
+
+    res = client.patch(
+        f"/api/browsers/{created['id']}", json={"kernel_id": plain["id"]}, headers=_auth(token)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["fingerprint_id"] is None
+    assert res.json()["fingerprint_mode"] == "default"
+
 
 
 # ── 生命周期 ────────────────────────────────────────────────

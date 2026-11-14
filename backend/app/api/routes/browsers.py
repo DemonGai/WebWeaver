@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, SessionDep, require_permission
@@ -41,8 +41,14 @@ async def get_browsers(snapshot: Annotated[Snapshot, Depends(get_snapshot)]) -> 
 # 顺序很重要：/browsers/options 必须排在 /browsers/{browser_id} 前面，
 # 否则 "options" 会被当成实例名去吃详情接口
 @router.get("/browsers/options", response_model=BrowserOptions, summary="新建/绑定的候选资源")
-async def get_browser_options(session: SessionDep) -> BrowserOptions:
-    return await browser_pool.options(session)
+async def get_browser_options(
+    session: SessionDep,
+    browser_id: Annotated[
+        str | None,
+        Query(description="编辑场景传实例 id：把它已绑定的内核 / 代理保回来，避免保存时被清空"),
+    ] = None,
+) -> BrowserOptions:
+    return await browser_pool.options(session, browser_id)
 
 
 @router.get("/browsers/{browser_id}", response_model=BrowserDetail, summary="实例详情")

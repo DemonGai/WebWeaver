@@ -16,6 +16,11 @@ from app.schemas.domain import InstanceStatus
 # 而不是让前端自己拼 stop+start——那样两次请求之间状态会短暂不一致。
 BrowserActionName = Literal["start", "stop", "restart"]
 
+# 实例名：中文、字母、数字，可夹点 / 下划线 / 短横线 / 空格，但不能以它们开头。
+# 这里不用 `\w` 是因为它把全角标点、各种 Unicode 字母都算进来，名字会越写越野，
+# 而实例名是要当唯一键用的。空格允许「上海 01」这类习惯写法，首尾由服务层 strip。
+INSTANCE_NAME_PATTERN = r"^[A-Za-z0-9\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff._\- ]*$"
+
 
 class BrowserOption(BaseModel):
     """下拉选项：id + 展示文案 + 补充说明，够前端直接渲染。"""
@@ -27,11 +32,26 @@ class BrowserOption(BaseModel):
     disabled: bool = False
 
 
+class KernelOption(BrowserOption):
+    """内核候选。
+
+    只有内核自己知道它带不带指纹补丁：不带的内核（ungoogled-chromium、Firefox 系）
+    收到 ``--fingerprint`` 只会静默忽略，看上去正常、实际没生效。所以把能力
+    直接挂在选项上，前端据此决定要不要显示指纹与出口两栏。
+    """
+
+    supports_fingerprint: bool = True
+    # 不支持时的理由，直接给用户看
+    fingerprint_note: str = ""
+    # 当前部署版本，版本下拉的「跟随内核当前版本」要显示它
+    version: str = ""
+
+
 class BrowserOptions(BaseModel):
     """新建 / 绑定弹窗需要的全部候选资源。"""
 
     groups: list[BrowserOption]
-    kernels: list[BrowserOption]
+    kernels: list[KernelOption]
     # 内核 → 磁盘上已下载的版本（新到旧）。新建实例时可以让用户挑版本，
     # 老实例留在旧版本上，新实例直接用新版本。
     kernel_versions: dict[str, list[str]] = Field(default_factory=dict)
@@ -51,8 +71,8 @@ class BrowserCreate(BaseModel):
     name: str = Field(
         min_length=2,
         max_length=64,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
-        description="实例名，作为业务唯一标识",
+        pattern=INSTANCE_NAME_PATTERN,
+        description="实例名，作为业务唯一标识；支持中文",
     )
     group_id: UUID | None = None
     kernel_id: UUID | None = None
@@ -76,7 +96,7 @@ class BrowserUpdate(BaseModel):
         default=None,
         min_length=2,
         max_length=64,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+        pattern=INSTANCE_NAME_PATTERN,
     )
     group_id: UUID | None = None
     kernel_id: UUID | None = None

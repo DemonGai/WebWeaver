@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
 import { copyText } from '@/lib/clipboard'
-import { PageHeader, PageShell } from '@/components/Layout'
+import { PageShell } from '@/components/Layout'
 import { Card, SearchInput, SoftChip, type Tone } from '@/components/ui'
 import { IdBadge } from '@/components/IdBadge'
 import { Toast, useToast } from '@/components/Toast'
@@ -12,7 +12,6 @@ import {
   IconArrowUpRight,
   IconBrowser,
   IconEye,
-  IconMonitor,
   IconPower,
   IconRefresh,
   IconX,
@@ -134,29 +133,23 @@ export default function NoVncConsolePage() {
 
   return (
     <PageShell>
-      <PageHeader
-        icon={<IconMonitor size={19} />}
-        title="noVNC 详情"
-        subtitle="左侧选择实例，右侧直接接管容器里的浏览器画面"
-        actions={
-          <>
-            <button type="button" className="btn-ghost" onClick={() => navigate('/browsers')}>
-              <IconArrowLeft size={14} />
-              返回浏览器池
-            </button>
-            <button type="button" className="btn-ghost" onClick={reload}>
-              <IconRefresh size={14} />
-              刷新
-            </button>
-          </>
-        }
-      />
+      {/* 不再占一整块页头：标题对使用者没有增量信息，把返回入口直接放到列表上方 */}
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <button type="button" className="btn-ghost !h-8 !px-3 !text-[12px]" onClick={() => navigate('/browsers')}>
+          <IconArrowLeft size={13} />
+          返回浏览器池
+        </button>
+        <button type="button" className="btn-ghost !h-8 !px-3 !text-[12px]" onClick={reload}>
+          <IconRefresh size={13} />
+          刷新
+        </button>
+      </div>
 
       {status === 'error' && <ErrorState message={error} onRetry={reload} />}
       {status === 'loading' && !data && <Loading />}
 
       {data && (
-        <div className="grid grid-cols-1 gap-4 lg:h-[calc(100vh-200px)] lg:min-h-[560px] lg:grid-cols-[318px_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-4 lg:h-[calc(100vh-156px)] lg:min-h-[560px] lg:grid-cols-[318px_minmax(0,1fr)]">
           {/* 左：实例选择 */}
           <Card className="flex max-h-[460px] flex-col overflow-hidden lg:h-full lg:max-h-none">
             <div className="space-y-2 border-b border-[var(--line)] p-2.5">

@@ -5,6 +5,11 @@
 # 仓库在 Windows 上开发（core.autocrlf=true），不显式钉住的话 push 上去就是 CRLF，
 # Linux/macOS 克隆后执行会报 bad interpreter: /usr/bin/env: 'bash\r'
 *.sh text eol=lf
+# 镜像构建文件也一样：Dockerfile 里的续行符遇到 CRLF 会解析失败，
+# entrypoint 脚本进容器后必须是 LF，否则报 bad interpreter: /bin/sh^M
+Dockerfile text eol=lf
+docker/*.sh text eol=lf
+docker/*.Dockerfile text eol=lf
 
 # 二进制，别做换行转换和文本 diff
 *.png binary

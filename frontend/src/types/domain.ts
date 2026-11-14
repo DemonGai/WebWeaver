@@ -201,6 +201,8 @@ export interface KernelOption extends BrowserOption {
   fingerprint_note: string
   /** 当前部署版本 */
   version: string
+  /** 状态徽标（测试中 / 已弃用），展开下拉即可见 */
+  badge: string
 }
 
 export interface BrowserOptions {

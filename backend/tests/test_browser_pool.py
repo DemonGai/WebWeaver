@@ -23,11 +23,51 @@ from app.models import (
     Kernel,
     KernelStatus,
 )
+from app.services import kernel_image, kernel_scan
+from app.services.kernel_image import ImageInfo
 from app.services.seed import DEMO_PASSWORD
 
 client = TestClient(app)
 
 TEST_PREFIX = "brw-test-"
+
+# 伪造的本地镜像清单：用例不能依赖「这台机器拉过哪些镜像」。
+# ungoogled-chromium 故意不给镜像，用来验证「没拉过镜像的内核不进下拉」。
+FAKE_IMAGES: dict[str, list[str]] = {
+    "cloakbrowser": ["128.0.6613.5", "128.0.6613.2"],
+    "fingerprint-chromium": ["126.0.6478.1"],
+    "camoufox": ["128.0.3"],
+}
+
+
+def _fake_images(*, without: str | None = None) -> list[ImageInfo]:
+    """按 ``FAKE_IMAGES`` 造镜像清单，``without`` 指定某个内核当作没拉过镜像。"""
+    items: list[ImageInfo] = []
+    for slug, versions in FAKE_IMAGES.items():
+        if slug == without:
+            continue
+        for version in versions:
+            tag = f"{slug}-{version}"
+            items.append(
+                ImageInfo(
+                    ref=f"demo/browser_engine:{tag}",
+                    repository="demo/browser_engine",
+                    tag=tag,
+                    image_id=f"sha256:{tag}",
+                    size_bytes=400 * 1024 * 1024,
+                    created_at="2026-11-10T13:50:54Z",
+                    digest=f"sha256:{tag}",
+                    arch="amd64",
+                    os_name="linux",
+                    labels={"org.opencontainers.image.version": version},
+                )
+            )
+    return items
+
+
+@pytest.fixture(autouse=True)
+def fake_local_images(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(kernel_image, "list_images", lambda *_a, **_k: _fake_images())
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -93,8 +133,20 @@ def _create(name: str, token: str, **extra) -> dict:
     return res.json()
 
 
+def _kernel_id(name: str) -> str:
+    """按内核名查库拿 id：用来构造「下拉里没有，但接口仍要挡住」的场景。"""
+
+    async def run() -> str:
+        async with SessionLocal() as session:
+            kernel = await session.scalar(select(Kernel).where(Kernel.name == name))
+            assert kernel is not None, f"种子里没有内核 {name}"
+            return str(kernel.id)
+
+    return asyncio.run(run())
+
+
 def _set_kernel_status(kernel_id: str, status: str) -> None:
-    """直接改库里的内核状态，用来模拟「这个内核后来被停用了」。"""
+    """直接改库里的内核状态，用来模拟「这个内核后来被标成弃用」。"""
 
     async def run() -> None:
         async with SessionLocal() as session:
@@ -133,24 +185,24 @@ def test_detail_unknown_returns_404(seeded_database: None) -> None:
     assert client.get("/api/browsers/not-a-real-instance").status_code == 404
 
 
-def test_options_only_active_kernels(seeded_database: None) -> None:
-    """下拉只列内核管理里可用的内核。
+def test_options_only_kernels_with_images(seeded_database: None) -> None:
+    """下拉只列「镜像就绪」的内核，口径与内核管理页的绿标一致。
 
-    种子里 Camoufox / CloakBrowser 是 active，fingerprint-chromium 是 testing、
-    ungoogled-chromium 是 deprecated —— 后两个选了也起不来，不该出现在列表里。
+    状态不是门槛：fingerprint-chromium 是 testing，但镜像在本地，照样能起；
+    反过来 ungoogled-chromium 是 active，没拉过镜像选了也只会在启动时炸。
+    Camoufox 就算本地有镜像也不算——它还没做成受支持的内核。
     """
     body = client.get("/api/browsers/options").json()
     names = [k["label"] for k in body["kernels"]]
     assert "CloakBrowser" in names
-    assert "fingerprint-chromium" not in names
-    assert "ungoogled-chromium" not in names
+    assert "fingerprint-chromium" in names, "测试中但镜像就绪，应该可选"
+    assert "ungoogled-chromium" not in names, "没有本地镜像的不该出现"
+    assert "Camoufox" not in names, "还没做成镜像的引擎不算就绪"
 
     # 指纹能力挂在选项上：前端据此决定要不要显示「出口 IP / 指纹模板」
     cloak = next(k for k in body["kernels"] if k["label"] == "CloakBrowser")
-    camoufox = next(k for k in body["kernels"] if k["label"] == "Camoufox")
     assert cloak["supports_fingerprint"] is True
-    assert camoufox["supports_fingerprint"] is False
-    assert camoufox["fingerprint_note"], "不支持时要给出理由，否则用户不知道为什么少了两栏"
+    assert body["kernel_versions"][cloak["id"]] == ["128.0.6613.5", "128.0.6613.2"]
 
 
 def test_fingerprint_rejected_on_kernel_without_patch(seeded_database: None) -> None:
@@ -161,14 +213,15 @@ def test_fingerprint_rejected_on_kernel_without_patch(seeded_database: None) -> 
     """
     token = _login()
     options = client.get("/api/browsers/options").json()
-    kernel = next(k for k in options["kernels"] if not k["supports_fingerprint"])
+    # 下拉里已经没有不带指纹补丁的内核了，按名字取 id 直接打接口
+    kernel_id = _kernel_id("Camoufox")
     fingerprint = options["fingerprints"][0]
 
     res = client.post(
         "/api/browsers",
         json={
             "name": f"{TEST_PREFIX}fp",
-            "kernel_id": kernel["id"],
+            "kernel_id": kernel_id,
             "fingerprint_id": fingerprint["id"],
         },
         headers=_auth(token),
@@ -187,8 +240,10 @@ def test_chinese_instance_name(seeded_database: None) -> None:
     assert client.get(f"/api/browsers/{name}", headers=_auth(token)).json()["id"] == created["id"]
 
 
-def test_options_keeps_current_kernel_for_edit(seeded_database: None) -> None:
-    """编辑弹窗要能看到实例当前绑的内核，哪怕它已经被停用。
+def test_options_keeps_current_kernel_for_edit(
+    seeded_database: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """编辑弹窗要能看到实例当前绑的内核，哪怕本地镜像已经没了。
 
     否则用户只是改个备注，下拉里找不到当前值，保存时内核就被清空了。
     """
@@ -197,15 +252,29 @@ def test_options_keeps_current_kernel_for_edit(seeded_database: None) -> None:
     kernel = next(k for k in options["kernels"] if k["supports_fingerprint"])
     created = _create(f"{TEST_PREFIX}keep", token, kernel_id=kernel["id"])
 
+    slug = kernel_scan.engine_slug(kernel["label"])
+    monkeypatch.setattr(kernel_image, "list_images", lambda *_a, **_k: _fake_images(without=slug))
+
+    body = client.get(f"/api/browsers/options?browser_id={created['id']}").json()
+    kept = [k for k in body["kernels"] if k["id"] == kernel["id"]]
+    assert kept, "当前实例绑的内核必须留在候选里"
+    # 别的实例照旧看不到它
+    other = client.get("/api/browsers/options").json()
+    assert all(k["id"] != kernel["id"] for k in other["kernels"])
+
+
+def test_options_marks_deprecated_kernel(seeded_database: None) -> None:
+    """镜像就绪但已弃用的内核仍在下拉里，但要说明自己为什么还在。
+
+    过滤按镜像走，状态只影响提示——否则用户会以为「明明有镜像为什么选不到」。
+    """
+    options = client.get("/api/browsers/options").json()
+    kernel = next(k for k in options["kernels"] if k["supports_fingerprint"])
     _set_kernel_status(kernel["id"], "deprecated")
     try:
-        body = client.get(f"/api/browsers/options?browser_id={created['id']}").json()
-        kept = [k for k in body["kernels"] if k["id"] == kernel["id"]]
-        assert kept, "当前实例绑的内核必须留在候选里"
-        assert "已弃用" in kept[0]["hint"], "停用的内核要说明自己为什么还在列表里"
-        # 别的实例照旧看不到它
-        other = client.get("/api/browsers/options").json()
-        assert all(k["id"] != kernel["id"] for k in other["kernels"])
+        body = client.get("/api/browsers/options").json()
+        kept = next(k for k in body["kernels"] if k["id"] == kernel["id"])
+        assert "已弃用" in kept["hint"]
     finally:
         _set_kernel_status(kernel["id"], "active")
 
@@ -219,7 +288,7 @@ def test_switch_to_kernel_without_patch_drops_fingerprint(seeded_database: None)
     token = _login()
     options = client.get("/api/browsers/options").json()
     patchy = next(k for k in options["kernels"] if k["supports_fingerprint"])
-    plain = next(k for k in options["kernels"] if not k["supports_fingerprint"])
+    plain_id = _kernel_id("Camoufox")  # 下拉里不列，但接口仍要能正确处理换过去
 
     created = _create(
         f"{TEST_PREFIX}switch",
@@ -230,7 +299,7 @@ def test_switch_to_kernel_without_patch_drops_fingerprint(seeded_database: None)
     assert created["fingerprint_mode"] == "template"
 
     res = client.patch(
-        f"/api/browsers/{created['id']}", json={"kernel_id": plain["id"]}, headers=_auth(token)
+        f"/api/browsers/{created['id']}", json={"kernel_id": plain_id}, headers=_auth(token)
     )
     assert res.status_code == 200, res.text
     assert res.json()["fingerprint_id"] is None

@@ -13,7 +13,8 @@ import type { BrowserDetail, BrowserFormValues, BrowserOptions } from '@/types/d
  * 提交时打哪个接口。拆成两个组件会让「加个字段」变成改两处。
  *
  * 三条与后端对齐的规则：
- * 1. 内核只列内核管理里 active 的（后端已过滤），停用的选不起来；
+ * 1. 内核只列内核管理里「镜像就绪」的（后端已过滤，判定口径与内核页绿标一致），
+ *    本地一个镜像版本都没有的选不起来；
  * 2. 内核带不带指纹补丁决定要不要显示「出口 IP / 指纹模板」——不带补丁的内核
  *    收到指纹参数只会静默忽略，界面上摆着输入框等于骗人；
  * 3. 实例名允许中文，作为业务唯一标识直接展示。
@@ -164,7 +165,7 @@ export function BrowserDialog({
             />
           </Field>
 
-          <Field label="内核" hint="只列内核管理里可用的内核">
+          <Field label="内核" hint="只列内核管理里镜像就绪的内核">
             <Select
               value={form.kernel_id ?? ''}
               onChange={(id) => {
@@ -184,7 +185,7 @@ export function BrowserDialog({
             />
             {options.kernels.length === 0 && (
               <p className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
-                内核管理里没有可用的内核，先去获取一个再回来建实例
+                还没有镜像就绪的内核，先到内核管理里拉一个镜像再回来建实例
               </p>
             )}
           </Field>
@@ -298,7 +299,14 @@ function Select({
 }: {
   value: string
   onChange: (value: string) => void
-  options: { id: string; label: string; hint: string; disabled: boolean }[]
+  options: {
+    id: string
+    label: string
+    hint: string
+    disabled: boolean
+    /** 内核才有：测试中 / 已弃用，展开下拉时挂在右侧 */
+    badge?: string
+  }[]
   placeholder: string
 }) {
   const current = options.find((o) => o.id === value)
@@ -313,7 +321,8 @@ function Select({
           ...options.map((o) => ({
             value: o.id,
             label: o.label,
-            hint: o.disabled ? '已被占用' : undefined,
+            // 被占用的优先级最高：它决定了这一项能不能点
+            hint: o.disabled ? '已被占用' : o.badge || undefined,
             // 已被别的实例绑走的资源不能选，但仍然列出来 —— 看不到就不知道去向
             disabled: o.disabled,
           })),

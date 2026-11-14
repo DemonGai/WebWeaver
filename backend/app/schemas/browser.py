@@ -45,6 +45,8 @@ class KernelOption(BrowserOption):
     fingerprint_note: str = ""
     # 当前部署版本，版本下拉的「跟随内核当前版本」要显示它
     version: str = ""
+    # 状态徽标（测试中 / 已弃用），展开下拉时就能看见，不必等选中
+    badge: str = ""
 
 
 class BrowserOptions(BaseModel):

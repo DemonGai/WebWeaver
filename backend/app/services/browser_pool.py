@@ -56,7 +56,7 @@ from app.schemas.browser import (
     KernelOption,
 )
 from app.schemas.domain import InstanceStatus
-from app.services import audit, fingerprint_caps, kernel_image, kernel_scan
+from app.services import audit, fingerprint_caps, kernel_image, kernel_pool, kernel_scan
 from app.services.fingerprint_caps import KernelCaps
 
 # 端口只分配不监听：预留一段固定区间，取当前库里没被占用的最小号。
@@ -87,7 +87,9 @@ _KERNEL_STATUS_TEXT = {
 async def options(session: AsyncSession, browser_id: str | None = None) -> BrowserOptions:
     """候选资源清单。
 
-    一、只给「现在真能用」的：内核只列 ``status=active`` 的，出口只列没被判失败的。
+    一、只给「现在真能用」的：内核只列本地**镜像就绪**的（内核管理页上那个绿标
+    「镜像就绪 N 个」的判定口径），出口只列没被判失败的。状态不算门槛——testing
+    的镜像照样能起，反倒是 active 但还没拉镜像的，选了也只会在启动时炸掉。
     二、例外是当前实例自己已经绑上的那一条——编辑时它不能凭空消失，否则用户只是
     改个备注，保存时也会把内核和代理一起改掉。所以按 ``browser_id`` 把当前值保回来。
     三、已被别的实例绑定的账号与 IP 标成 ``disabled`` 而不是直接过滤掉：
@@ -104,11 +106,30 @@ async def options(session: AsyncSession, browser_id: str | None = None) -> Brows
     groups = list(
         (await session.scalars(select(Group).order_by(Group.sort_order, Group.name))).all()
     )
-    # 停用的内核（testing / deprecated）不进下拉：选了也起不来，只会让人以为能用
+
+    # 一次取全本地镜像，几个内核共用；docker 不可用时一律当「没有可用版本」，
+    # 不能让下拉框把整个页面拖挂
+    try:
+        images = kernel_image.list_images(kernel_scan.registry())
+    except kernel_image.DockerError:
+        images = []
+
+    all_kernels = list((await session.scalars(select(Kernel).order_by(Kernel.name))).all())
+    # 「镜像就绪」的内核才有得选：与内核管理页那块绿标同一个判定——没做成镜像的
+    # 引擎（Camoufox）即使本地躺着镜像也不算，页面上写的是「暂未支持」。
+    versions_of = {
+        k.id: (
+            []
+            if kernel_scan.engine_slug(k.name) in kernel_pool.UNSUPPORTED
+            else kernel_scan.scan_versions(k.name, images=images)
+        )
+        for k in all_kernels
+    }
+
     kernels = [
         k
-        for k in (await session.scalars(select(Kernel).order_by(Kernel.name))).all()
-        if k.status is KernelStatus.active or (current is not None and k.id == current.kernel_id)
+        for k in all_kernels
+        if versions_of[k.id] or (current is not None and k.id == current.kernel_id)
     ]
     accounts = list((await session.scalars(select(Account).order_by(Account.username))).all())
     ips = [
@@ -123,19 +144,11 @@ async def options(session: AsyncSession, browser_id: str | None = None) -> Brows
 
     # 一次取全本地镜像，几个内核共用；docker 不可用时一律当「没有可选版本」，
     # 新建实例走内核当前版本兜底，不能让下拉框把整个页面拖挂
-    try:
-        images = kernel_image.list_images(kernel_scan.registry())
-    except kernel_image.DockerError:
-        images = []
-
     return BrowserOptions(
         groups=[BrowserOption(id=str(g.id), label=g.name, hint=g.code) for g in groups],
         kernels=[_kernel_option(k) for k in kernels],
-        # 只列本地确有镜像的版本；空列表时前端退回内核当前版本
-        kernel_versions={
-            str(k.id): [v.version for v in kernel_scan.scan_versions(k.name, images=images)]
-            for k in kernels
-        },
+        # 版本下拉只列本地确有镜像的版本；已按同一份 images 算过，直接复用
+        kernel_versions={str(k.id): [v.version for v in versions_of[k.id]] for k in kernels},
         accounts=[
             BrowserOption(
                 id=str(a.id),
@@ -174,9 +187,12 @@ def _caps_of(kernel: Kernel) -> KernelCaps:
 def _kernel_option(kernel: Kernel) -> KernelOption:
     """内核记录 → 下拉项，顺带把「带不带指纹补丁」告诉前端。"""
     caps = _caps_of(kernel)
+    status_text = "" if kernel.status is KernelStatus.active else _KERNEL_STATUS_TEXT.get(
+        kernel.status.value, kernel.status.value
+    )
     hint = f"{kernel.engine} · {kernel.version}"
-    if kernel.status is not KernelStatus.active:
-        hint += f" · {_KERNEL_STATUS_TEXT.get(kernel.status.value, kernel.status.value)}"
+    if status_text:
+        hint += f" · {status_text}"
     return KernelOption(
         id=str(kernel.id),
         label=kernel.name,
@@ -184,6 +200,7 @@ def _kernel_option(kernel: Kernel) -> KernelOption:
         supports_fingerprint=caps.supported,
         fingerprint_note=caps.reason or caps.note,
         version=kernel.version,
+        badge=status_text,
     )
 
 

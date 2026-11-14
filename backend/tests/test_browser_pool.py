@@ -240,6 +240,55 @@ def test_chinese_instance_name(seeded_database: None) -> None:
     assert client.get(f"/api/browsers/{name}", headers=_auth(token)).json()["id"] == created["id"]
 
 
+def test_duplicate_copies_kernel_only(seeded_database: None) -> None:
+    """复制实例：内核、分组、备注跟着走，账号 / 出口 / 指纹故意不复制。
+
+    这三样是排他资源，原实例正占着；照抄只会撞「已被占用」。复制出来的是
+    「同款空壳」，用户按需再绑。
+    """
+    token = _login()
+    created: list[dict] = []
+    try:
+        options = client.get("/api/browsers/options").json()
+        kernel = next(k for k in options["kernels"] if k["supports_fingerprint"])
+        account = next(a for a in options["accounts"] if not a["disabled"])
+        ip = next(i for i in options["ips"] if not i["disabled"])
+
+        source = _create(
+            f"{TEST_PREFIX}copy",
+            token,
+            kernel_id=kernel["id"],
+            account_id=account["id"],
+            ip_id=ip["id"],
+            fingerprint_id=options["fingerprints"][0]["id"],
+            note="仓库一号",
+        )
+        created.append(source)
+        assert source["account_id"] and source["ip_id"]
+
+        res = client.post(f"/api/browsers/{source['id']}/duplicate", headers=_auth(token))
+        assert res.status_code == 201, res.text
+        copied = res.json()
+        created.append(copied)
+        assert copied["name"] == f"{TEST_PREFIX}copy 副本"
+        assert copied["kernel_id"] == kernel["id"]
+        assert copied["note"] == "仓库一号"
+        assert copied["status"] == "stopped"
+        assert copied["account_id"] is None
+        assert copied["ip_id"] is None
+        assert copied["fingerprint_id"] is None
+        assert copied["ip_mode"] == "direct"
+
+        # 连着复制：名字往后排，不会撞唯一键
+        again = client.post(f"/api/browsers/{source['id']}/duplicate", headers=_auth(token)).json()
+        created.append(again)
+        assert again["name"] == f"{TEST_PREFIX}copy 副本2"
+    finally:
+        # 这个用例占着种子里唯一可用的账号与 IP，不释放会把后面的用例饿死
+        for item in created:
+            client.delete(f"/api/browsers/{item['id']}", headers=_auth(token))
+
+
 def test_options_keeps_current_kernel_for_edit(
     seeded_database: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

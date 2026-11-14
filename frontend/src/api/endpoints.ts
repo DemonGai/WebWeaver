@@ -59,6 +59,7 @@ export const endpoints = {
     api.post<BrowserDetail>('/browsers', body),
   updateBrowser: (id: string, body: BrowserFormValues) =>
     api.patch<BrowserDetail>(`/browsers/${id}`, body),
+  duplicateBrowser: (id: string) => api.post<BrowserDetail>(`/browsers/${id}/duplicate`),
   deleteBrowser: (id: string) => api.delete<BrowserMutationResult>(`/browsers/${id}`),
   browserAction: (id: string, action: BrowserActionName) =>
     api.post<BrowserMutationResult>(`/browsers/${id}/actions`, { action }),

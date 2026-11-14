@@ -21,6 +21,9 @@ BrowserActionName = Literal["start", "stop", "restart"]
 # 而实例名是要当唯一键用的。空格允许「上海 01」这类习惯写法，首尾由服务层 strip。
 INSTANCE_NAME_PATTERN = r"^[A-Za-z0-9\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff._\- ]*$"
 
+# 名字长度上限。复制实例时会拼「 副本N」后缀，也要按这条截，别让副本名超长
+INSTANCE_NAME_MAX = 64
+
 
 class BrowserOption(BaseModel):
     """下拉选项：id + 展示文案 + 补充说明，够前端直接渲染。"""
@@ -70,7 +73,7 @@ class BrowserCreate(BaseModel):
 
     name: str = Field(
         min_length=2,
-        max_length=64,
+        max_length=INSTANCE_NAME_MAX,
         pattern=INSTANCE_NAME_PATTERN,
         description="实例名，作为业务唯一标识；支持中文",
     )
@@ -95,7 +98,7 @@ class BrowserUpdate(BaseModel):
     name: str | None = Field(
         default=None,
         min_length=2,
-        max_length=64,
+        max_length=INSTANCE_NAME_MAX,
         pattern=INSTANCE_NAME_PATTERN,
     )
     group_id: UUID | None = None

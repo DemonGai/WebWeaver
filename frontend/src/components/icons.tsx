@@ -426,6 +426,13 @@ export const IconTrash = make(
 
 export const IconPlay = make(<path d="M8.4 5.6 18 12l-9.6 6.4z" />)
 
+export const IconCopy = make(
+  <>
+    <rect x="8.6" y="8.6" width="11" height="11" rx="2.2" />
+    <path d="M15.4 8.6V6.4A2.2 2.2 0 0 0 13.2 4.2H6.4A2.2 2.2 0 0 0 4.2 6.4v6.8a2.2 2.2 0 0 0 2.2 2.2h2.2" />
+  </>,
+)
+
 export const IconArrowUp = make(<path d="M12 19.5V5M6.4 10.6 12 5l5.6 5.6" />)
 
 export const IconRocket = make(

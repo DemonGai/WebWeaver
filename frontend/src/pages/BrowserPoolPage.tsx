@@ -13,6 +13,7 @@ import {
   IconBolt,
   IconBrowser,
   IconClock,
+  IconCopy,
   IconFingerprint,
   IconGlobe,
   IconGrid,
@@ -167,8 +168,20 @@ export default function BrowserPoolPage() {
     [notify, refresh, selected],
   )
 
-  const removeInstance = async (item: InstanceSummary) => {
+  const duplicateInstance = async (item: InstanceSummary) => {
+    setBusy((prev) => [...prev, item.id])
     try {
+      const detail = await endpoints.duplicateBrowser(item.id)
+      notify('ok', `已复制为 ${detail.name}，账号与出口需要重新绑定`)
+      refresh()
+    } catch (err) {
+      notify('err', err instanceof ApiError || err instanceof Error ? err.message : '复制失败')
+    } finally {
+      setBusy((prev) => prev.filter((x) => x !== item.id))
+    }
+  }
+
+  const removeInstance = async (item: InstanceSummary) => {    try {
       await endpoints.deleteBrowser(item.id)
       notify('ok', `实例 ${item.name} 已删除`)
       setConfirming(null)
@@ -389,6 +402,7 @@ export default function BrowserPoolPage() {
               onOpen={() => navigate('/novnc/' + it.id)}
               onAction={(action) => runAction(it.id, action)}
               onConfigure={() => setDialog({ open: true, id: it.id })}
+              onDuplicate={() => duplicateInstance(it)}
               onDelete={() => setConfirming(it)}
             />
           ))}
@@ -550,6 +564,7 @@ function InstanceCard({
   onOpen,
   onAction,
   onConfigure,
+  onDuplicate,
   onDelete,
 }: {
   item: InstanceSummary
@@ -560,11 +575,13 @@ function InstanceCard({
   onOpen: () => void
   onAction: (action: BrowserActionName) => void
   onConfigure: () => void
+  onDuplicate: () => void
   onDelete: () => void
 }) {
   const [menu, setMenu] = useState(false)
   const badge = meta[item.status]
-  const running = item.status === 'running'
+  // 已经起来的实例主操作一律是接管画面：noVNC 才是真正要干的事
+  const running = item.status === 'running' || item.status === 'idle'
 
   const primary = running
     ? { label: '打开 noVNC', icon: <IconMonitor size={11} />, run: onOpen }
@@ -600,8 +617,10 @@ function InstanceCard({
               <div className="truncate text-[13.5px] font-semibold tracking-tight text-[var(--ink-900)]">
                 {item.name}
               </div>
+              {/* 状态已经在右上角 chip 里了，这里只在 note 讲的是别的事时才补一句 */}
               <div className="mt-1 truncate text-[11px] text-[var(--ink-400)]">
-                分组：{item.group} · {item.note ?? `启动于 ${item.started_at ?? '—'}`}
+                分组：{item.group}
+                {item.note && item.note !== badge.label ? ` · ${item.note}` : ''}
               </div>
             </div>
           </div>
@@ -664,22 +683,23 @@ function InstanceCard({
               onClick={onConfigure}
               className="btn-ghost !h-7 !px-3 !text-[11.5px]"
             >
-              绑定配置
+              编辑配置
             </button>
           </div>
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={busy}
-              aria-label={running ? '停止实例' : '启动实例'}
-              title={running ? '停止实例' : '启动实例'}
-              onClick={() => onAction(running ? 'stop' : 'start')}
-              className={`icon-btn size-7 !border-transparent !bg-transparent disabled:opacity-50 ${
-                running ? 'text-emerald-600' : 'text-[var(--ink-400)]'
-              }`}
-            >
-              <IconPower size={12} />
-            </button>
+            {/* 只在已经起来的时候给「停止」：没起来时主按钮就是启动，这里再来一个纯属重复 */}
+            {running && (
+              <button
+                type="button"
+                disabled={busy}
+                aria-label="停止实例"
+                title="停止实例"
+                onClick={() => onAction('stop')}
+                className="icon-btn size-7 !border-transparent !bg-transparent text-emerald-600 disabled:opacity-50"
+              >
+                <IconPower size={12} />
+              </button>
+            )}
             <div className="relative">
               <button
                 type="button"
@@ -693,21 +713,24 @@ function InstanceCard({
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setMenu(false)} />
                   <div className="absolute right-0 z-20 mt-1 w-[132px] overflow-hidden rounded-xl border border-[var(--line)] bg-white py-1 shadow-[0_12px_32px_-8px_rgba(16,24,40,0.24)]">
+                    {/* 没起来的实例没有「重启」可言，那个动作就是主按钮的启动 */}
+                    {running && (
+                      <MenuItem
+                        onClick={() => {
+                          setMenu(false)
+                          onAction('restart')
+                        }}
+                        icon={<IconRefresh size={11} />}
+                        label="重启"
+                      />
+                    )}
                     <MenuItem
                       onClick={() => {
                         setMenu(false)
-                        onAction('restart')
+                        onDuplicate()
                       }}
-                      icon={<IconRefresh size={11} />}
-                      label="重启"
-                    />
-                    <MenuItem
-                      onClick={() => {
-                        setMenu(false)
-                        onConfigure()
-                      }}
-                      icon={<IconBolt size={11} />}
-                      label="编辑配置"
+                      icon={<IconCopy size={11} />}
+                      label="复制实例"
                     />
                     <MenuItem
                       onClick={() => {

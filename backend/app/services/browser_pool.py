@@ -45,6 +45,7 @@ from app.models import (
     utcnow,
 )
 from app.schemas.browser import (
+    INSTANCE_NAME_MAX,
     BrowserActionItem,
     BrowserBatchResult,
     BrowserCreate,
@@ -476,6 +477,69 @@ async def update(
         request=request,
     )
     return await _detail_of(session, browser)
+
+
+async def duplicate(
+    session: AsyncSession,
+    browser_id: str,
+    *,
+    operator: str,
+    request: Request | None = None,
+) -> BrowserDetail:
+    """复制一台实例：沿用内核、内核版本、分组与备注。
+
+    账号 / 出口 IP / 指纹故意不复制——三者都是排他资源，原实例正占着，
+    照抄只会撞「已被占用」。复制出来的是「同款空壳」，用户按需再绑。
+    """
+    source = await get_browser(session, browser_id)
+    name = await _unique_copy_name(session, source.name)
+
+    browser = Browser(
+        name=name,
+        status=BrowserStatus.stopped,
+        group_id=source.group_id,
+        kernel_id=source.kernel_id,
+        kernel_version=source.kernel_version,
+        account_id=None,
+        ip_mode=IpBindingMode.direct,
+        ip_id=None,
+        fingerprint_mode=FingerprintMode.default,
+        fingerprint_id=None,
+        note=source.note,
+    )
+    session.add(browser)
+    await session.flush()
+    await session.commit()
+
+    await audit.record(
+        session,
+        action=AuditAction.create,
+        resource_type=AuditResourceType.browser,
+        resource_id=browser.id,
+        resource_name=browser.name,
+        operator=operator,
+        detail=f"从 {source.name} 复制出 {browser.name}",
+        changes={"name": {"before": None, "after": browser.name}, "copied_from": source.name},
+        request=request,
+    )
+    return await _detail_of(session, browser)
+
+
+async def _unique_copy_name(session: AsyncSession, base: str) -> str:
+    """``仓库一号`` → ``仓库一号 副本``，重名再往后排 ``副本2``。
+
+    不加时间戳：副本名是给人看的，一眼要能认出是从哪台来的。
+    """
+    for index in range(1, 100):
+        suffix = " 副本" if index == 1 else f" 副本{index}"
+        candidate = f"{base[: INSTANCE_NAME_MAX - len(suffix)].rstrip()}{suffix}"
+        exists = await session.scalar(select(Browser).where(Browser.name == candidate))
+        if exists is None:
+            return candidate
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=f"{base} 的副本太多了，先清理一些再复制",
+    )
 
 
 async def remove(

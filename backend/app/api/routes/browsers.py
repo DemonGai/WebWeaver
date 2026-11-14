@@ -90,6 +90,24 @@ async def update_browser(
     )
 
 
+@router.post(
+    "/browsers/{browser_id}/duplicate",
+    response_model=BrowserDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="复制实例（沿用内核与备注，不复制账号 / 出口 / 指纹）",
+    dependencies=[Depends(require_permission("browser:create"))],
+)
+async def duplicate_browser(
+    browser_id: str,
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
+) -> BrowserDetail:
+    return await browser_pool.duplicate(
+        session, browser_id, operator=user.username, request=request
+    )
+
+
 @router.delete(
     "/browsers/{browser_id}",
     response_model=BrowserMutationResult,

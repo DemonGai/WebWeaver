@@ -774,8 +774,12 @@ async def _ensure_users(session: AsyncSession, workspaces: dict[str, Workspace])
 
 
 async def seed_demo_cluster(session: AsyncSession) -> None:
-    """写入整套演示集群数据；已经有业务数据就跳过。"""
-    if await session.scalar(select(func.count()).select_from(Kernel)):
+    """写入整套演示集群数据；已经有业务数据就跳过。
+
+    判据用分组而不是内核：``seed()`` 现在会先登记四个内核引擎（空版本），
+    拿内核查「有没有写过演示数据」会永远为真，整套夹具就被跳过了。
+    """
+    if await session.scalar(select(func.count()).select_from(Group)):
         return
 
     workspaces = await _ensure_workspaces(session)
@@ -787,10 +791,17 @@ async def seed_demo_cluster(session: AsyncSession) -> None:
         session.add(group)
         groups[item["code"]] = group
 
+    # 内核可能已由 seed() 登记过（同名，版本为空）：复用那一行并把演示字段覆盖
+    # 上去，否则 name 的唯一约束会直接冲突。
     kernels: dict[str, Kernel] = {}
     for item in KERNELS:
-        kernel = Kernel(**item)
-        session.add(kernel)
+        kernel = await session.scalar(select(Kernel).where(Kernel.name == item["name"]))
+        if kernel is None:
+            kernel = Kernel(**item)
+            session.add(kernel)
+        else:
+            for key, value in item.items():
+                setattr(kernel, key, value)
         kernels[item["name"]] = kernel
     await session.flush()
     primary_kernel = next(iter(kernels.values()))

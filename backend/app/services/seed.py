@@ -1,8 +1,13 @@
-"""初始化数据：工作区、权限目录、超级管理员。
+"""初始化数据：工作区、权限目录、超级管理员、四个内核登记项。
 
-**只写系统运行必需的东西**，不再塞演示用业务数据（内核、实例、账号、代理、
-指纹、审计样例这些一律不写）。空库启动后有且只有：一个默认工作区、一套权限点
-与四个内置角色、一个能登录的超级管理员。其余内容由用户自己建。
+**只写系统运行必需的东西**，不塞演示用业务数据（实例、账号、代理、指纹、审计
+样例这些一律不写）。空库启动后有：一个默认工作区、一套权限点与四个内置角色、
+一个能登录的超级管理员，以及 CloakBrowser / Camoufox / fingerprint-chromium /
+ungoogled-chromium 四条内核登记。
+
+内核登记项的意义：内核管理页是按台账渲染卡片的，没有登记项就没有卡片，也就
+没有「拉取镜像」的入口。登记只占一行名字与元信息，``version`` 留空表示「还没装
+过镜像」，拉起镜像后由 ``kernel_pool.adopt_pulled`` 回填真实版本。
 
 写入是幂等的：已存在就跳过，可以反复执行。没有 ``--reset`` —— 这个脚本只补
 不删，删数据不该由初始化脚本负责。
@@ -23,6 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionLocal, dispose
 from app.core.security import hash_password
 from app.models import (
+    Kernel,
+    KernelChannel,
+    KernelStatus,
     Permission,
     RbacAction,
     RbacModule,
@@ -50,6 +58,61 @@ ADMIN = {
     "password": "admin",
     "note": "初始化创建的超级管理员",
 }
+
+# 四个内核的登记项。只写「这个引擎存在」，版本号留空 —— 本地装了什么版本由
+# kernel_scan 扫镜像得出（页面的「当前版本」就是这么来的），拉取成功后会由
+# kernel_pool.adopt_pulled 把真实版本回填到台账。
+# 不要在这里写死版本号：写死的值本地没有对应镜像时，实例启动会报「缺这个版本」。
+ENGINE_REGISTRATIONS: list[dict[str, object]] = [
+    {
+        "name": "CloakBrowser",
+        "engine": "Chromium",
+        "channel": KernelChannel.stable,
+        "status": KernelStatus.active,
+        "version": "",
+        "repo_url": "https://github.com/CloakHQ/CloakBrowser",
+        "detection_level": "C++ 层注入",
+        "pass_rate": 98,
+        "share": 46,
+        "note": "主力内核，反检测通过率最高",
+    },
+    {
+        "name": "Camoufox",
+        "engine": "Firefox",
+        "channel": KernelChannel.stable,
+        "status": KernelStatus.active,
+        "version": "",
+        "repo_url": "https://github.com/daijro/camoufox",
+        "detection_level": "Juggler 层修改",
+        "pass_rate": 94,
+        "share": 28,
+        "note": "Firefox 系，适合对 Chromium 敏感的平台",
+    },
+    {
+        "name": "fingerprint-chromium",
+        "engine": "Chromium",
+        "channel": KernelChannel.stable,
+        "status": KernelStatus.testing,
+        "version": "",
+        "repo_url": "https://github.com/adryfish/fingerprint-chromium",
+        "detection_level": "前端 JS 注入",
+        "pass_rate": 87,
+        "share": 18,
+        "note": "开源方案，补丁能力有限",
+    },
+    {
+        "name": "ungoogled-chromium",
+        "engine": "Chromium",
+        "channel": KernelChannel.beta,
+        "status": KernelStatus.deprecated,
+        "version": "",
+        "repo_url": "https://github.com/ungoogled-software/ungoogled-chromium",
+        "detection_level": "原生隐私加固",
+        "pass_rate": 72,
+        "share": 8,
+        "note": "版本偏旧，仅用于问题复现",
+    },
+]
 
 # 权限点按「模块 → 动作」生成，避免手写三十多行重复定义
 PERMISSION_MATRIX: dict[RbacModule, tuple[RbacAction, ...]] = {
@@ -187,6 +250,24 @@ async def _ensure_workspace(session: AsyncSession) -> Workspace:
     return workspace
 
 
+async def _seed_kernels(session: AsyncSession) -> None:
+    """登记四个内核引擎；已有同名登记项就跳过（不动版本与状态）。
+
+    只为了「内核管理页有卡片、能点拉取」。版本、镜像清单一律以本地镜像为准，
+    这里不写死任何版本号。
+    """
+    names = [str(item["name"]) for item in ENGINE_REGISTRATIONS]
+    existing = set(await session.scalars(select(Kernel.name).where(Kernel.name.in_(names))))
+    for item in ENGINE_REGISTRATIONS:
+        if item["name"] in existing:
+            continue
+        session.add(Kernel(**item))
+    await session.flush()
+    # 必须自己提交：老库里角色与超管都已存在时，后面两个步骤都会提前 return，
+    # 没人再 commit，这段插入会被回滚掉（表现为日志说 kernels=4、表里却是空的）。
+    await session.commit()
+
+
 async def _seed_rbac(session: AsyncSession) -> None:
     """初始化权限目录与内置角色；已经有角色就跳过。"""
     if await session.scalar(select(func.count()).select_from(Role)):
@@ -253,6 +334,7 @@ async def _ensure_admin(session: AsyncSession, workspace: Workspace) -> User:
 async def seed(session: AsyncSession) -> dict[str, int]:
     """写入初始化数据，返回各表行数。幂等，可反复执行。"""
     workspace = await _ensure_workspace(session)
+    await _seed_kernels(session)
     await _seed_rbac(session)
     await _ensure_admin(session, workspace)
     return await counts(session)
@@ -261,7 +343,7 @@ async def seed(session: AsyncSession) -> dict[str, int]:
 async def counts(session: AsyncSession) -> dict[str, int]:
     """各表当前行数，便于在命令行确认。"""
     result: dict[str, int] = {}
-    for model in (Workspace, Permission, Role, RolePermission, User, UserRole):
+    for model in (Workspace, Permission, Role, RolePermission, User, UserRole, Kernel):
         result[model.__tablename__] = int(
             await session.scalar(select(func.count()).select_from(model)) or 0
         )

@@ -70,6 +70,8 @@ export default function BrowserPoolPage() {
     id: null,
   })
   const [confirming, setConfirming] = useState<InstanceSummary | null>(null)
+  // 列表视图里同一时刻只允许开一个「更多」菜单，用 id 记账即可
+  const [menuId, setMenuId] = useState<string | null>(null)
   const { toast, notify, dismiss } = useToast()
 
   const instances = data?.instances ?? []
@@ -184,7 +186,11 @@ export default function BrowserPoolPage() {
 
   const copyInstanceId = async (item: InstanceSummary) => {
     const ok = await copyText(item.id)
-    notify(ok ? 'ok' : 'err', ok ? `已复制实例 ID ${item.id}` : '复制失败，请手动选中 ID')
+    // 剪贴板被浏览器拦掉时把完整值直接摆出来，至少能手动抄
+    notify(
+      ok ? 'ok' : 'err',
+      ok ? `已复制实例 ID ${item.id}` : `复制失败，完整 ID：${item.id}`,
+    )
   }
 
   const removeInstance = async (item: InstanceSummary) => {
@@ -328,7 +334,10 @@ export default function BrowserPoolPage() {
           <div className="flex items-center gap-0.5 rounded-full bg-[#f4f4f5] p-0.5">
             <button
               type="button"
-              onClick={() => setView('grid')}
+              onClick={() => {
+                setView('grid')
+                setMenuId(null)
+              }}
               aria-label="卡片视图"
               aria-pressed={view === 'grid'}
               title="卡片视图"
@@ -342,7 +351,10 @@ export default function BrowserPoolPage() {
             </button>
             <button
               type="button"
-              onClick={() => setView('list')}
+              onClick={() => {
+                setView('list')
+                setMenuId(null)
+              }}
               aria-label="列表视图"
               aria-pressed={view === 'list'}
               title="列表视图"
@@ -416,7 +428,8 @@ export default function BrowserPoolPage() {
           ))}
         </div>
       ) : (
-        <Card className="mt-4 overflow-hidden">
+        /* 不能用 overflow-hidden：行末的「更多」菜单是 absolute，会被裁掉 */
+        <Card className="mt-4">
           <table className="w-full">
             <thead>
               <tr className="border-b border-[var(--line)]">
@@ -437,8 +450,29 @@ export default function BrowserPoolPage() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((it) => {
+              {visible.map((it, idx) => {
                 const busyNow = busy.includes(it.id)
+                // 最后一行向下弹会顶到页面底，改成向上展开
+                const menuUp = idx === visible.length - 1
+                // 与卡片同一套判定：idle 也已经起来了，主操作就该是接管画面
+                const running = it.status === 'running' || it.status === 'idle'
+                const primary = running
+                  ? {
+                      label: '打开 noVNC',
+                      icon: <IconMonitor size={11} />,
+                      run: () => navigate('/novnc/' + it.id),
+                    }
+                  : it.status === 'error'
+                    ? {
+                        label: '重新启动',
+                        icon: <IconRefresh size={11} />,
+                        run: () => runAction(it.id, 'restart'),
+                      }
+                    : {
+                        label: '启动实例',
+                        icon: <IconPlay size={11} />,
+                        run: () => runAction(it.id, 'start'),
+                      }
                 return (
                   <tr key={it.id} className="border-b border-[var(--line)] last:border-0">
                     <td className="px-4 py-3">
@@ -449,9 +483,18 @@ export default function BrowserPoolPage() {
                       />
                     </td>
                     <td className="table-td">
-                      <div className="font-medium text-[var(--ink-900)]">{it.name}</div>
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span
+                          className="truncate font-medium text-[var(--ink-900)]"
+                          title={it.name}
+                        >
+                          {it.name}
+                        </span>
+                        <IdBadge id={it.id} onCopy={() => copyInstanceId(it)} />
+                      </div>
                       <div className="mt-0.5 text-[10.5px] text-[var(--ink-400)]">
-                        {it.note ?? '—'}
+                        {/* 备注常常就是状态文案（如「已停止」），跟左边 chip 重了就留空 */}
+                        {it.note && it.note !== meta[it.status].label ? it.note : '—'}
                       </div>
                     </td>
                     <td className="table-td">
@@ -473,26 +516,78 @@ export default function BrowserPoolPage() {
                         <button
                           type="button"
                           disabled={busyNow}
-                          onClick={() => runAction(it.id, it.status === 'running' ? 'stop' : 'start')}
-                          className="btn-ghost !h-7 !px-2.5 !text-[11px] disabled:opacity-50"
+                          onClick={primary.run}
+                          className="btn-dark !h-7 !px-2.5 !text-[11px] disabled:opacity-60"
                         >
-                          {it.status === 'running' ? '停止' : '启动'}
+                          {busyNow ? <IconRefresh size={11} /> : primary.icon}
+                          {busyNow ? '处理中…' : primary.label}
                         </button>
                         <button
                           type="button"
-                          onClick={() => navigate('/novnc/' + it.id)}
-                          className="btn-dark !h-7 !px-2.5 !text-[11px]"
-                        >
-                          noVNC
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="配置"
                           onClick={() => setDialog({ open: true, id: it.id })}
-                          className="icon-btn size-7"
+                          className="btn-ghost !h-7 !px-2.5 !text-[11px]"
                         >
-                          <IconMore size={12} />
+                          编辑配置
                         </button>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            aria-label="更多操作"
+                            onClick={() => setMenuId(menuId === it.id ? null : it.id)}
+                            className="icon-btn size-7 !border-transparent !bg-transparent"
+                          >
+                            <IconMore size={13} />
+                          </button>
+                          {menuId === it.id && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setMenuId(null)} />
+                              <div
+                                className={`absolute right-0 z-20 w-[132px] overflow-hidden rounded-xl border border-[var(--line)] bg-white py-1 shadow-[0_12px_32px_-8px_rgba(16,24,40,0.24)] ${
+                                  menuUp ? 'bottom-full mb-1' : 'mt-1'
+                                }`}
+                              >
+                                {/* 表格里没有卡片那颗电源键，停止与重启都收进菜单 */}
+                                {running && (
+                                  <MenuItem
+                                    onClick={() => {
+                                      setMenuId(null)
+                                      runAction(it.id, 'stop')
+                                    }}
+                                    icon={<IconPower size={11} />}
+                                    label="停止"
+                                  />
+                                )}
+                                {running && (
+                                  <MenuItem
+                                    onClick={() => {
+                                      setMenuId(null)
+                                      runAction(it.id, 'restart')
+                                    }}
+                                    icon={<IconRefresh size={11} />}
+                                    label="重启"
+                                  />
+                                )}
+                                <MenuItem
+                                  onClick={() => {
+                                    setMenuId(null)
+                                    duplicateInstance(it)
+                                  }}
+                                  icon={<IconCopy size={11} />}
+                                  label="复制实例"
+                                />
+                                <MenuItem
+                                  onClick={() => {
+                                    setMenuId(null)
+                                    setConfirming(it)
+                                  }}
+                                  icon={<IconTrash size={11} />}
+                                  label="删除"
+                                  danger
+                                />
+                              </div>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -632,14 +727,7 @@ function InstanceCard({
                   {item.name}
                 </span>
                 {/* ID 太长（UUID 36 位），卡片上只露前 8 位；点一下复制完整 ID */}
-                <button
-                  type="button"
-                  onClick={onCopyId}
-                  title={`${item.id}\n点击复制完整 ID`}
-                  className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[#f7f7f8] px-1 py-px font-mono text-[10px] leading-[14px] text-[var(--ink-500)] transition-colors hover:border-[#d9d9e0] hover:bg-[#f0f0f2] hover:text-[var(--ink-700)]"
-                >
-                  {item.id.slice(0, 8)}
-                </button>
+                <IdBadge id={item.id} onCopy={onCopyId} />
               </div>
               {/* 状态已经在右上角 chip 里了，这里只在 note 讲的是别的事时才补一句 */}
               <div className="mt-1 truncate text-[11px] text-[var(--ink-400)]">
@@ -773,6 +861,29 @@ function InstanceCard({
         </div>
       </div>
     </Card>
+  )
+}
+
+/**
+ * 实例 ID 徽标，卡片与列表共用。
+ *
+ * UUID 36 位放不下，只露前 8 位做「看得出是哪台」的凭据；完整值放在 title 里，
+ * 点一下复制，日志里对号时不用再翻详情页。
+ */
+function IdBadge({ id, onCopy }: { id: string; onCopy: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        // 卡片/行本身可能有其它点击行为，别让复制连带触发
+        e.stopPropagation()
+        onCopy()
+      }}
+      title={`${id}\n点击复制完整 ID`}
+      className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[#f7f7f8] px-1 py-px font-mono text-[10px] leading-[14px] text-[var(--ink-500)] transition-colors hover:border-[#d9d9e0] hover:bg-[#f0f0f2] hover:text-[var(--ink-700)]"
+    >
+      {id.slice(0, 8)}
+    </button>
   )
 }
 

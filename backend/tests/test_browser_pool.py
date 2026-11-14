@@ -10,6 +10,7 @@ from subprocess import CompletedProcess
 from uuid import UUID
 
 import pytest
+from demo_cluster import DEMO_PASSWORD
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
@@ -26,7 +27,6 @@ from app.models import (
 )
 from app.services import browser_novnc, browser_runtime, kernel_image, kernel_scan
 from app.services.kernel_image import ImageInfo
-from app.services.seed import DEMO_PASSWORD
 
 client = TestClient(app)
 

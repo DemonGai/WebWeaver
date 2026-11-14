@@ -6,13 +6,13 @@
 
 import asyncio
 
+from demo_cluster import DEMO_PASSWORD
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
 from app.core.db import SessionLocal, dispose
 from app.main import app
 from app.models import AuthSession, User
-from app.services.seed import DEMO_PASSWORD
 from app.services.user import parse_user_agent
 
 client = TestClient(app)

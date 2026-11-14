@@ -8,6 +8,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from demo_cluster import DEMO_PASSWORD
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, update
 
@@ -16,7 +17,6 @@ from app.core.db import SessionLocal, dispose
 from app.core.security import encode_access_token, token_digest
 from app.main import app
 from app.models import AuthSession, User
-from app.services.seed import DEMO_PASSWORD
 
 client = TestClient(app)
 TEST_UA = "testclient"

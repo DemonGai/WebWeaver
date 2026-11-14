@@ -10,6 +10,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
+from demo_cluster import DEMO_PASSWORD
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select, update
 
@@ -19,7 +20,6 @@ from app.core.security import hash_password, token_digest, verify_password
 from app.main import app
 from app.models import AuthSession, PasswordResetToken, User, UserRole
 from app.services import auth_service
-from app.services.seed import DEMO_PASSWORD
 
 client = TestClient(app)
 DEMO_USERNAMES = ["admin_chen", "ops_lee", "viewer_lin"]

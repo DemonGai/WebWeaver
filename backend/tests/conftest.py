@@ -1,5 +1,9 @@
 """测试夹具：数据类接口依赖数据库，这里保证库里有演示数据。
 
+演示集群数据（内核 / 实例 / 账号 / 代理 / 指纹 / 审计样例 / 额外成员）现在放在
+``tests/demo_cluster.py``，只在跑测试时写入；生产初始化脚本只建工作区、权限
+目录和超级管理员。
+
 种子脚本是幂等的（库里已有数据就跳过），所以重复跑测试不会叠加行数。
 数据库连不上时跳过依赖它的用例，认证 / 内核那些纯内存接口照常跑。
 """
@@ -14,6 +18,7 @@ import asyncio  # noqa: E402
 from collections.abc import Iterator  # noqa: E402
 
 import pytest  # noqa: E402
+from demo_cluster import seed_demo_cluster  # noqa: E402
 from sqlalchemy import delete  # noqa: E402
 
 from app.core.db import SessionLocal, dispose  # noqa: E402
@@ -57,7 +62,10 @@ def seeded_database() -> None:
 
     async def run() -> None:
         async with SessionLocal() as session:
+            # 先建运行必需的数据（工作区 / 权限 / 超管），再灌演示集群数据；
+            # 演示数据只属于测试，不再由 app.services.seed 写入业务库
             await seed(session)
+            await seed_demo_cluster(session)
 
     try:
         asyncio.run(run())

@@ -5,11 +5,13 @@ import { ApiError } from '@/api/client'
 import { useApi } from '@/hooks/useApi'
 import { PageHeader, PageShell } from '@/components/Layout'
 import { Card, Checkbox, PillTabs, SearchInput, type Tone } from '@/components/ui'
+import { StatTile } from '@/components/StatTile'
 import { SelectMenu } from '@/components/SelectMenu'
 import { BrowserDialog } from '@/components/BrowserDialog'
 import { Modal } from '@/components/Modal'
 import {
   IconBolt,
+  IconBrowser,
   IconClock,
   IconFingerprint,
   IconGlobe,
@@ -18,8 +20,8 @@ import {
   IconList,
   IconMonitor,
   IconMore,
-  IconPlus,
   IconPlay,
+  IconPlus,
   IconPower,
   IconRefresh,
   IconTrash,
@@ -198,25 +200,76 @@ export default function BrowserPoolPage() {
     )
   if (!data) return null
 
+  // 统计口径直接取后端的 cards，避免前端再算一遍算错了
+  const card = (title: string) => data.cards.find((c) => c.title === title)
+  const schedulable = card('可调度')
+  const needFix = card('需处理')
+  const queue = card('队列')
+
   return (
     <PageShell>
       <PageHeader
+        icon={<IconBrowser size={19} />}
         title="浏览器池"
         subtitle="每个实例可独立绑定账号、出口 IP 与浏览器指纹，并通过 noVNC 实时接管"
         actions={
-          <button
-            type="button"
-            className="btn-dark"
-            onClick={() => setDialog({ open: true, id: null })}
-          >
-            <IconPlus size={14} />
-            新建浏览器实例
-          </button>
+          <>
+            <button type="button" className="btn-ghost" onClick={reload}>
+              <IconRefresh size={14} />
+              刷新
+            </button>
+            <button
+              type="button"
+              className="btn-dark"
+              onClick={() => setDialog({ open: true, id: null })}
+            >
+              <IconPlus size={14} />
+              新建浏览器实例
+            </button>
+          </>
         }
       />
 
+      {/* 统计条：与内核管理、账号管理同一套 StatTile */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatTile
+          label="实例总数"
+          value={String(data.totals.total)}
+          hint={`${data.totals.running} 台运行中`}
+          tone="dark"
+          icon={<IconBrowser size={15} />}
+        />
+        <StatTile
+          label="运行中"
+          value={String(data.totals.running)}
+          hint="noVNC 可实时接管"
+          tone="emerald"
+          icon={<IconPlay size={15} />}
+        />
+        <StatTile
+          label="可调度"
+          value={String(schedulable?.value ?? 0)}
+          hint={schedulable?.hint ?? '空闲待命'}
+          tone="blue"
+          icon={<IconBolt size={15} />}
+        />
+        <StatTile
+          label="需处理"
+          value={String(needFix?.value ?? 0)}
+          hint={
+            needFix && needFix.value > 0
+              ? (needFix.hint ?? '异常中断')
+              : queue && queue.value > 0
+                ? `另有 ${queue.value} 台排队中`
+                : '没有异常实例'
+          }
+          tone={needFix && needFix.value > 0 ? 'rose' : 'zinc'}
+          icon={<IconMonitor size={15} />}
+        />
+      </div>
+
       {/* 筛选栏 */}
-      <Card className="flex flex-wrap items-center justify-between gap-3 p-3.5">
+      <Card className="mt-4 flex flex-wrap items-center justify-between gap-3 p-3.5">
         <div className="flex items-center gap-3">
           <SearchInput
             placeholder="按实例名、账号或 IP 搜索"

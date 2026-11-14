@@ -34,7 +34,13 @@ from app.schemas.domain import (
     FingerprintUpdate,
     KernelFingerprintCaps,
 )
-from app.services import audit, fingerprint_apply, fingerprint_caps, fingerprint_probe
+from app.services import (
+    audit,
+    browser_runtime,
+    fingerprint_apply,
+    fingerprint_caps,
+    fingerprint_probe,
+)
 from app.services.cluster import Snapshot
 from app.services.fingerprint_caps import FingerprintSpec, KernelCaps
 from app.services.kernel_scan import engine_slug
@@ -636,9 +642,12 @@ async def apply_to(
             )
             continue
 
-        container = f"{fingerprint_apply.CONTAINER_PREFIX}{browser.name}"
+        # 容器名就是实例 ID，跟启动 / 停止用的是同一个值
+        container = browser_runtime.container_name(browser.id)
         try:
-            result = await fingerprint_apply.apply(caps, spec, instance_name=browser.name)
+            result = await fingerprint_apply.apply(
+                caps, spec, instance_name=browser.name, container=container
+            )
         except fingerprint_apply.ApplyError as exc:
             detail = " ".join(exc.detail) if exc.detail else ""
             items.append(

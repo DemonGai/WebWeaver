@@ -23,7 +23,7 @@ from app.models import (
     Kernel,
     KernelStatus,
 )
-from app.services import kernel_image, kernel_scan
+from app.services import browser_runtime, kernel_image, kernel_scan
 from app.services.kernel_image import ImageInfo
 from app.services.seed import DEMO_PASSWORD
 
@@ -68,6 +68,53 @@ def _fake_images(*, without: str | None = None) -> list[ImageInfo]:
 @pytest.fixture(autouse=True)
 def fake_local_images(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(kernel_image, "list_images", lambda *_a, **_k: _fake_images())
+
+
+# 容器调用流水：(动作, 实例 id, 关键字参数)。用例用它核对「容器名就是实例 ID」
+CONTAINER_CALLS: list[tuple[str, str, dict]] = []
+
+
+@pytest.fixture(autouse=True)
+def fake_containers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把容器生命周期换成一个内存集合。
+
+    启停现在是真打 docker 的，测试里不能因此真起一堆浏览器容器：慢、占端口，
+    还会在开发机 ``docker ps`` 里留下一堆垃圾。这里只保留「起没起」这个事实，
+    足以覆盖状态流转与错误分支。
+    """
+    live: set[str] = set()
+    CONTAINER_CALLS.clear()
+
+    async def start_container(browser_id, **kwargs) -> None:
+        CONTAINER_CALLS.append(("start", str(browser_id), kwargs))
+        live.add(str(browser_id))
+
+    async def stop_container(browser_id) -> None:
+        CONTAINER_CALLS.append(("stop", str(browser_id), {}))
+        live.discard(str(browser_id))
+
+    async def restart_container(browser_id) -> None:
+        CONTAINER_CALLS.append(("restart", str(browser_id), {}))
+        if str(browser_id) not in live:
+            raise browser_runtime.ContainerError("容器不存在")
+        # 原地重启：容器前后都在跑，端口与配置不变
+
+    async def remove_container(browser_id) -> None:
+        CONTAINER_CALLS.append(("remove", str(browser_id), {}))
+        live.discard(str(browser_id))
+
+    async def state(browser_id) -> str:
+        return "running" if str(browser_id) in live else "absent"
+
+    monkeypatch.setattr(browser_runtime, "start_container", start_container)
+    monkeypatch.setattr(browser_runtime, "stop_container", stop_container)
+    monkeypatch.setattr(browser_runtime, "restart_container", restart_container)
+    monkeypatch.setattr(browser_runtime, "remove_container", remove_container)
+    monkeypatch.setattr(browser_runtime, "state", state)
+    # 镜像解析也不查 docker：真实 ref 长什么样与状态流转无关
+    monkeypatch.setattr(
+        browser_runtime, "resolve_image", lambda *_a, **_k: "demo/browser_engine:test"
+    )
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -128,7 +175,12 @@ def _auth(token: str) -> dict[str, str]:
 
 
 def _create(name: str, token: str, **extra) -> dict:
-    res = client.post("/api/browsers", json={"name": name, **extra}, headers=_auth(token))
+    """建实例。没显式给内核时默认绑 CloakBrowser —— 启动要镜像，不绑内核起不来。"""
+    payload: dict = {"name": name}
+    if "kernel_id" not in extra:
+        payload["kernel_id"] = _kernel_id("CloakBrowser")
+    payload.update(extra)
+    res = client.post("/api/browsers", json=payload, headers=_auth(token))
     assert res.status_code == 201, res.text
     return res.json()
 
@@ -368,6 +420,10 @@ def test_lifecycle_start_stop_restart(seeded_database: None) -> None:
     started = _actions(created["id"], "start", token)
     assert started.status_code == 200 and started.json()["ok"] is True
 
+    # 容器名必须是实例 ID：中文实例名在 docker 里根本起不来
+    assert CONTAINER_CALLS[-1][1] == created["id"]
+    assert CONTAINER_CALLS[-1][2]["instance_name"] == f"{TEST_PREFIX}life"
+
     detail = client.get(f"/api/browsers/{created['id']}", headers=_auth(token)).json()
     assert detail["status"] == "running"
     # 启动后必须拿到一组可用的接管地址，否则前端「打开 noVNC」没地方去
@@ -379,14 +435,47 @@ def test_lifecycle_start_stop_restart(seeded_database: None) -> None:
 
     restarted = _actions(created["id"], "restart", token)
     assert restarted.status_code == 200
+    # 容器还在时走原地重启，不要偷偷删了重建（那样会丢页面状态）
+    assert CONTAINER_CALLS[-1][0] == "restart"
+    assert CONTAINER_CALLS[-1][1] == created["id"]
 
     stopped = _actions(created["id"], "stop", token)
     assert stopped.status_code == 200
+    assert CONTAINER_CALLS[-1][0] == "stop"
+    assert CONTAINER_CALLS[-1][1] == created["id"]
     detail = client.get(f"/api/browsers/{created['id']}", headers=_auth(token)).json()
     assert detail["status"] == "stopped"
     assert detail["cdp_url"] is None and detail["vnc_url"] is None
 
     assert _actions(created["id"], "stop", token).status_code == 409
+
+
+def test_start_without_kernel_is_rejected(seeded_database: None) -> None:
+    """没绑内核就没有镜像可跑，422 说清楚缺什么。"""
+    token = _login()
+    created = _create(f"{TEST_PREFIX}nokernel", token, kernel_id=None)
+    res = _actions(created["id"], "start", token)
+    assert res.status_code == 422
+    assert "内核" in res.json()["detail"]
+    # 失败不能留下「自称运行中」的实例
+    detail = client.get(f"/api/browsers/{created['id']}", headers=_auth(token)).json()
+    assert detail["status"] == "stopped"
+
+
+def test_start_reports_missing_image(seeded_database: None, monkeypatch) -> None:
+    """镜像不在本地时，把原因原样给用户，而不是改完状态再让人去猜。"""
+    token = _login()
+    created = _create(f"{TEST_PREFIX}noimage", token)
+
+    def explode(*_args, **_kwargs):
+        raise browser_runtime.ContainerError("本地还没有 CloakBrowser 的镜像")
+
+    monkeypatch.setattr(browser_runtime, "resolve_image", explode)
+    res = _actions(created["id"], "start", token)
+    assert res.status_code == 409
+    assert "镜像" in res.json()["detail"]
+    detail = client.get(f"/api/browsers/{created['id']}", headers=_auth(token)).json()
+    assert detail["status"] == "stopped"
 
 
 def test_restart_from_stopped_starts_it(seeded_database: None) -> None:

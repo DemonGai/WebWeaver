@@ -31,7 +31,8 @@ from typing import Any
 from app.services import kernel_image
 from app.services.fingerprint_caps import FingerprintSpec, KernelCaps, render
 
-# 容器名的固定前缀，要和内核管理页给出的 docker run 命令一致
+# 容器名就是实例 ID（browser_runtime.container_name），不再拼实例名：
+# 实例名允许中文，Docker 会拒绝；改名后也会指到一个不存在的容器。
 CONTAINER_PREFIX = "wv-"
 # 容器内指纹文件路径，对应 entrypoint 的 FINGERPRINT_FILE 默认值
 CONTAINER_FINGERPRINT_PATH = "/data/fingerprint.json"
@@ -78,7 +79,11 @@ async def apply(
             f"没有可以写给 {caps.engine_label} 的指纹参数，先至少填一个种子或平台"
         )
 
-    name = container or f"{CONTAINER_PREFIX}{instance_name}"
+    # 容器名必须由调用方给：它就是实例 ID（见 browser_runtime.container_name）。
+    # 以前按「wv-<实例名>」推算，实例名允许中文后 docker 直接拒绝，改名后也会指错。
+    if not container:
+        raise ApplyError("没给容器名，无法定位要下发指纹的实例容器")
+    name = container
     env = await _container_env(name)
     shadowing = sorted(key for key in env if key.startswith(SHADOWING_PREFIX))
     if shadowing:
@@ -119,9 +124,8 @@ async def _container_env(name: str) -> dict[str, str]:
         raise ApplyError(
             f"找不到容器 {name}（{hint}）",
             detail=[
-                f"指纹是按「实例名带 {CONTAINER_PREFIX} 前缀」找容器的：{name}。",
-                "先在实例上点「启动」，或者用内核管理页「运行方式」里的命令手动起一个，"
-                f"并确保 --name 是 {name}。",
+                f"指纹是按「实例 ID = 容器名」找容器的：{name}。",
+                "先在实例上点「启动」把容器拉起来，容器名会自动用这个 ID。",
             ],
         )
 

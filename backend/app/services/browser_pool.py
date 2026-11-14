@@ -1,9 +1,8 @@
 """浏览器池的写操作：新建、编辑、绑定、删除与生命周期动作。
 
-**关于「启动」**：这一版没有真正的内核进程，也没有调度器。``start`` 只做
-「状态流转 + 分配一组 CDP / noVNC 端口 + 写审计」，让界面的行为与真实产品一致，
-等接入调度器时把 :func:`_allocate_ports` 与 ``cdp_url`` 的生成换成真实拉起即可，
-上层接口不用改。
+**关于「启动」**：启动 = 真起一个 Docker 容器，容器名就是实例 ID（见
+:mod:`app.services.browser_runtime`）。停止按同一个 ID 停容器，重启做原地
+``docker restart``；数据库里的状态只是容器状态的投影，不再是唯一真相。
 
 **为什么写操作都带审计**：浏览器池是整个系统里最「容易被追责」的一块——
 谁把谁的账号解绑了、谁在半夜停了实例，都得查得到。所以每个动作都落一条
@@ -16,6 +15,7 @@
 
 from __future__ import annotations
 
+import socket
 from datetime import datetime
 from uuid import UUID
 
@@ -56,13 +56,24 @@ from app.schemas.browser import (
     KernelOption,
 )
 from app.schemas.domain import InstanceStatus
-from app.services import audit, fingerprint_caps, kernel_image, kernel_pool, kernel_scan
+from app.services import (
+    audit,
+    browser_runtime,
+    fingerprint_caps,
+    fingerprint_pool,
+    kernel_image,
+    kernel_pool,
+    kernel_scan,
+)
+from app.services.browser_runtime import ContainerError
 from app.services.fingerprint_caps import KernelCaps
 
-# 端口只分配不监听：预留一段固定区间，取当前库里没被占用的最小号。
-# CDP 与 noVNC 的偏移（+3100）跟种子数据里的既有分配保持一致，方便对照日志
+# 端口从固定区间里取：优先避开数据库里已分配的，再避开宿主机真占着的
+# （本机可能已经有手工起的容器 / 别的服务在同一段端口上）
 CDP_PORT_OFFSET = 3100
 VNC_PORT_BASE = 6080
+# 往下找多少号还没空位就放弃，别让一次启动扫几千个端口
+PORT_SCAN_LIMIT = 200
 
 # 状态文案：批量动作的结果要能直接读
 _STATUS_TEXT = {
@@ -563,6 +574,15 @@ async def remove(
         for row in rows:
             await session.delete(row)
     name = browser.name
+
+    # 容器按实例 ID 命名，实例删了它就成了没人认领的僵尸；数据卷保留，
+    # 万一删错了还能从 wv-data-<id> 里把 profile 捞回来
+    cleanup = ""
+    try:
+        await browser_runtime.remove_container(browser.id)
+    except ContainerError as exc:
+        cleanup = f"（容器未能清理：{exc}）"
+
     await session.delete(browser)
     await session.commit()
 
@@ -573,7 +593,7 @@ async def remove(
         resource_id=browser_id,
         resource_name=name,
         operator=operator,
-        detail=f"删除实例 {name}",
+        detail=f"删除实例 {name}{cleanup}",
         request=request,
     )
 
@@ -666,12 +686,11 @@ async def _apply(
     elif action == "stop":
         if browser.status is BrowserStatus.stopped:
             raise HTTPException(status_code=409, detail=f"{browser.name} 已经是停止状态")
-        _stop(browser)
+        await _stop(browser)
         done, message = AuditAction.stop, f"停止 {browser.name}"
     else:
         # 重启允许从任何状态发起：停止状态点重启的语义就是「拉起来」
-        _stop(browser)
-        await _start(session, browser)
+        await _restart(session, browser)
         done, message = AuditAction.start, f"重启 {browser.name}"
 
     await session.commit()
@@ -699,16 +718,50 @@ async def _apply(
 
 
 async def _start(session: AsyncSession, browser: Browser) -> None:
-    """分配端口、写运行时字段、置为运行中。"""
-    if browser.ip_id:
-        ip = await session.get(Ip, browser.ip_id)
-        if ip is not None and ip.status is IpStatus.failed:
-            raise HTTPException(
-                status_code=409,
-                detail=f"{browser.name} 绑定的出口 IP {ip.address} 不可达，请先更换",
-            )
+    """按实例 ID 起容器，成功后把运行时字段写回库。
 
-    cdp_port, vnc_port = await _allocate_ports(session, browser)
+    顺序是「先起容器，再落库」：反过来的话容器起失败会留下一个自称运行中的
+    实例，用户点进去连不上，还得多一步手工纠正。
+    """
+    kernel = await session.get(Kernel, browser.kernel_id) if browser.kernel_id else None
+    if kernel is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{browser.name} 还没绑定内核，先编辑配置选一个再启动",
+        )
+
+    ip = await session.get(Ip, browser.ip_id) if browser.ip_id else None
+    if ip is not None and ip.status is IpStatus.failed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{browser.name} 绑定的出口 IP {ip.address} 不可达，请先更换",
+        )
+
+    fingerprint: tuple[KernelCaps, object] | None = None
+    if browser.fingerprint_id:
+        template = await session.get(Fingerprint, browser.fingerprint_id)
+        if template is not None:
+            caps = fingerprint_caps.caps_for(kernel_scan.engine_slug(kernel.name))
+            if caps.supported:
+                fingerprint = (caps, fingerprint_pool.spec_of(template))
+            # 内核不带指纹补丁时不传：绑定时已挡过，这里是历史数据的兜底
+
+    try:
+        # 镜像解析与起容器都可能失败（镜像被删、端口被占），一并翻译成 409
+        image_ref = browser_runtime.resolve_image(kernel, browser.kernel_version)
+        cdp_port, vnc_port = await _allocate_ports(session, browser)
+        await browser_runtime.start_container(
+            browser.id,
+            image_ref=image_ref,
+            cdp_port=cdp_port,
+            vnc_port=vnc_port,
+            instance_name=browser.name,
+            proxy=browser_runtime.proxy_argument(ip),
+            fingerprint=fingerprint,
+        )
+    except ContainerError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
     browser.status = BrowserStatus.running
     browser.started_at = utcnow()
     browser.last_active_at = utcnow()
@@ -721,7 +774,44 @@ async def _start(session: AsyncSession, browser: Browser) -> None:
     browser.updated_at = utcnow()
 
 
-def _stop(browser: Browser) -> None:
+async def _stop(browser: Browser) -> None:
+    """按实例 ID 停容器。容器早就不在了也算成功 —— 状态以库为准对齐。"""
+    try:
+        await browser_runtime.stop_container(browser.id)
+    except ContainerError as exc:
+        # 停不掉就别改状态：界面显示「已停止」而容器还在跑，是最坏的一种谎
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{browser.name} 停止失败：{exc}",
+        ) from exc
+    _clear_runtime(browser)
+
+
+async def _restart(session: AsyncSession, browser: Browser) -> None:
+    """原地重启容器；容器已经不在就按当前配置重新起一台。
+
+    两者语义不同：``docker restart`` 保留创建时的代理 / 端口参数，适合「进程
+    卡住了」；重建会把当前配置带进去，适合「容器被清掉了」或库里的端口丢了。
+    """
+    if browser.vnc_port is None or await browser_runtime.state(browser.id) == "absent":
+        await _start(session, browser)
+        return
+
+    try:
+        await browser_runtime.restart_container(browser.id)
+    except ContainerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"{browser.name} 重启失败：{exc}",
+        ) from exc
+
+    browser.status = BrowserStatus.running
+    browser.started_at = utcnow()
+    browser.last_active_at = utcnow()
+    browser.updated_at = utcnow()
+
+
+def _clear_runtime(browser: Browser) -> None:
     browser.status = BrowserStatus.stopped
     browser.started_at = None
     browser.last_active_at = utcnow()
@@ -734,10 +824,10 @@ def _stop(browser: Browser) -> None:
 
 
 async def _allocate_ports(session: AsyncSession, browser: Browser) -> tuple[int, int]:
-    """从固定区间里取最小的空闲端口对。
+    """取一对「库里没分配、宿主机也没人监听」的 CDP / noVNC 端口。
 
-    只看数据库里别的实例占了哪些号——这台机器上真实有没有被系统进程占用
-    无法从这里判断，接调度器时这里要换成探测 + 加锁分配。
+    只看数据库不够：本机可能已经有手工起的容器、或者别的服务占着 6080，
+    ``docker run`` 会在发布端口那一步直接失败。所以两者都要避开。
     """
     used = set(
         await session.scalars(
@@ -745,9 +835,32 @@ async def _allocate_ports(session: AsyncSession, browser: Browser) -> tuple[int,
         )
     )
     vnc_port = VNC_PORT_BASE
-    while vnc_port in used:
+    for _ in range(PORT_SCAN_LIMIT):
+        cdp_port = vnc_port + CDP_PORT_OFFSET
+        if vnc_port not in used and _port_free(vnc_port) and _port_free(cdp_port):
+            return cdp_port, vnc_port
         vnc_port += 1
-    return vnc_port + CDP_PORT_OFFSET, vnc_port
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=f"从 {VNC_PORT_BASE} 起找了 {PORT_SCAN_LIMIT} 个端口都被占用了，先清理闲置实例",
+    )
+
+
+def _port_free(port: int) -> bool:
+    """宿主机这个端口能不能绑。
+
+    Windows 上不能开 ``SO_REUSEADDR``：那会让 bind 在已被监听的端口上照样成功，
+    检测就完全失效了。
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # 绑 0.0.0.0 与 docker 发布端口的绑定方式一致，能同时发现绑回环的服务
+        sock.bind(("0.0.0.0", port))
+    except OSError:
+        return False
+    finally:
+        sock.close()
+    return True
 
 
 # ── 内部小工具 ─────────────────────────────────────────────

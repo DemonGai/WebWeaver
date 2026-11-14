@@ -19,7 +19,6 @@ import {
   IconExpand,
   IconMonitor,
   IconPause,
-  IconPlus,
   IconRefresh,
   IconShield,
   IconTrend,
@@ -208,10 +207,6 @@ export default function OverviewPage() {
           <button type="button" className="btn-ghost" onClick={() => exportCsv(data)}>
             <IconDownload size={14} />
             导出报表
-          </button>
-          <button type="button" className="btn-dark" onClick={() => navigate('/browsers')}>
-            <IconPlus size={14} />
-            新建实例
           </button>
         </div>
       </div>

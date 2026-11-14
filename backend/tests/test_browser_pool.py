@@ -73,6 +73,8 @@ def fake_local_images(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # 容器调用流水：(动作, 实例 id, 关键字参数)。用例用它核对「容器名就是实例 ID」
 CONTAINER_CALLS: list[tuple[str, str, dict]] = []
+# 解析 docker 输出这类用例要绕过下面的 fixture，先留一份真实现
+_REAL_PUBLISHED_PORTS = browser_runtime.published_ports
 
 
 @pytest.fixture(autouse=True)
@@ -84,11 +86,14 @@ def fake_containers(monkeypatch: pytest.MonkeyPatch) -> None:
     足以覆盖状态流转与错误分支。
     """
     live: set[str] = set()
+    # 与 docker 一致：停止后容器仍保留端口映射，只有删掉才没有
+    ports: dict[str, tuple[int, int]] = {}
     CONTAINER_CALLS.clear()
 
     async def start_container(browser_id, **kwargs) -> None:
         CONTAINER_CALLS.append(("start", str(browser_id), kwargs))
         live.add(str(browser_id))
+        ports[str(browser_id)] = (kwargs["cdp_port"], kwargs["vnc_port"])
 
     async def stop_container(browser_id) -> None:
         CONTAINER_CALLS.append(("stop", str(browser_id), {}))
@@ -103,15 +108,20 @@ def fake_containers(monkeypatch: pytest.MonkeyPatch) -> None:
     async def remove_container(browser_id) -> None:
         CONTAINER_CALLS.append(("remove", str(browser_id), {}))
         live.discard(str(browser_id))
+        ports.pop(str(browser_id), None)
 
     async def state(browser_id) -> str:
         return "running" if str(browser_id) in live else "absent"
+
+    async def published_ports(browser_id) -> tuple[int, int] | None:
+        return ports.get(str(browser_id))
 
     monkeypatch.setattr(browser_runtime, "start_container", start_container)
     monkeypatch.setattr(browser_runtime, "stop_container", stop_container)
     monkeypatch.setattr(browser_runtime, "restart_container", restart_container)
     monkeypatch.setattr(browser_runtime, "remove_container", remove_container)
     monkeypatch.setattr(browser_runtime, "state", state)
+    monkeypatch.setattr(browser_runtime, "published_ports", published_ports)
     # 镜像解析也不查 docker：真实 ref 长什么样与状态流转无关
     monkeypatch.setattr(
         browser_runtime, "resolve_image", lambda *_a, **_k: "demo/browser_engine:test"
@@ -728,3 +738,100 @@ def test_novnc_overview_flags_missing_image_as_blocked() -> None:
 
 def test_novnc_target_unknown_instance_returns_404() -> None:
     assert client.get("/api/browsers/not-exist/novnc").status_code == 404
+
+
+# ── 端口以容器实际发布为准 ────────────────────────────────────
+
+
+def _always(value: str):
+    async def _fn(_browser_id) -> str:
+        return value
+
+    return _fn
+
+
+def _ports(pair: tuple[int, int]):
+    async def _fn(_browser_id) -> tuple[int, int]:
+        return pair
+
+    return _fn
+
+
+def test_published_ports_parses_docker_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``docker port`` 会为 IPv4/IPv6 各打一行，取先出现的那个即可。"""
+    monkeypatch.setattr(browser_runtime, "published_ports", _REAL_PUBLISHED_PORTS)
+    monkeypatch.setattr(
+        kernel_image,
+        "run",
+        lambda args, **_k: CompletedProcess(
+            args,
+            0,
+            "6080/tcp -> 0.0.0.0:6081\n6080/tcp -> [::]:6081\n"
+            "9222/tcp -> 0.0.0.0:9181\n9222/tcp -> [::]:9181\n",
+            "",
+        ),
+    )
+    assert asyncio.run(browser_runtime.published_ports("any-id")) == (9181, 6081)
+
+
+def test_published_ports_returns_none_when_container_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(browser_runtime, "published_ports", _REAL_PUBLISHED_PORTS)
+    monkeypatch.setattr(
+        kernel_image,
+        "run",
+        lambda args, **_k: CompletedProcess(args, 1, "", "Error: No such container"),
+    )
+    assert asyncio.run(browser_runtime.published_ports("any-id")) is None
+
+
+def test_start_syncs_ports_from_running_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    """容器已在跑但库里记成停止：以容器真实端口回写，别另分一个没人监听的端口。"""
+    token = _login()
+    item = _create(f"{TEST_PREFIX}ports-01", token)
+
+    monkeypatch.setattr(browser_runtime, "state", _always("running"))
+    monkeypatch.setattr(browser_runtime, "published_ports", _ports((9199, 6099)))
+
+    resp = _actions(item["id"], "start", token)
+    assert resp.status_code == 200
+    # 容器在跑就不该重建
+    assert [call[0] for call in CONTAINER_CALLS if call[1] == item["id"]] == []
+
+    detail = client.get(f"/api/browsers/{item['id']}").json()
+    assert detail["vnc_port"] == 6099
+    assert detail["cdp_url"] == "http://127.0.0.1:9199"
+    assert "6099" in detail["vnc_url"]
+
+
+def test_restart_rewrites_ports_from_container(monkeypatch: pytest.MonkeyPatch) -> None:
+    """重启不改端口，但库里的值可能早就漂了，按容器的真实端口纠正。"""
+    token = _login()
+    item = _create(f"{TEST_PREFIX}ports-02", token)
+    assert _actions(item["id"], "start", token).status_code == 200
+
+    before = client.get(f"/api/browsers/{item['id']}").json()["vnc_port"]
+    monkeypatch.setattr(browser_runtime, "published_ports", _ports((9399, 6299)))
+
+    assert _actions(item["id"], "restart", token).status_code == 200
+    after = client.get(f"/api/browsers/{item['id']}").json()
+    assert after["vnc_port"] == 6299
+    assert after["vnc_port"] != before
+    assert after["cdp_url"] == "http://127.0.0.1:9399"
+
+
+def test_start_reuses_stopped_container_ports(monkeypatch: pytest.MonkeyPatch) -> None:
+    """容器还在但已停止：沿用原端口，实例地址不会启动一次换一次。"""
+    token = _login()
+    item = _create(f"{TEST_PREFIX}ports-03", token)
+    assert _actions(item["id"], "start", token).status_code == 200
+    first = client.get(f"/api/browsers/{item['id']}").json()["vnc_port"]
+
+    assert _actions(item["id"], "stop", token).status_code == 200
+    # 停掉后容器仍保留端口映射（docker port 照样有输出），模拟这一状态
+    monkeypatch.setattr(browser_runtime, "published_ports", _ports((first + 3100, first)))
+
+    assert _actions(item["id"], "start", token).status_code == 200
+    again = client.get(f"/api/browsers/{item['id']}").json()["vnc_port"]
+    assert again == first

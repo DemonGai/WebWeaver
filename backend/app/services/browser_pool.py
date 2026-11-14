@@ -746,19 +746,32 @@ async def _start(session: AsyncSession, browser: Browser) -> None:
                 fingerprint = (caps, fingerprint_pool.spec_of(template))
             # 内核不带指纹补丁时不传：绑定时已挡过，这里是历史数据的兜底
 
+    # 容器可能早就在跑：库里状态被重置过、或有人手工起过。这时 Docker 里的
+    # 事实优先——重新分配端口会把库里记的地址换成没人监听的新端口。
+    already_running = await browser_runtime.state(browser.id) == "running"
+    live = await browser_runtime.published_ports(browser.id)
+
     try:
-        # 镜像解析与起容器都可能失败（镜像被删、端口被占），一并翻译成 409
-        image_ref = browser_runtime.resolve_image(kernel, browser.kernel_version)
-        cdp_port, vnc_port = await _allocate_ports(session, browser)
-        await browser_runtime.start_container(
-            browser.id,
-            image_ref=image_ref,
-            cdp_port=cdp_port,
-            vnc_port=vnc_port,
-            instance_name=browser.name,
-            proxy=browser_runtime.proxy_argument(ip),
-            fingerprint=fingerprint,
-        )
+        if already_running and live is not None:
+            # 容器在跑就不重建，只把真实端口写回库（下面统一落库）
+            cdp_port, vnc_port = live
+        else:
+            # 镜像解析与起容器都可能失败（镜像被删、端口被占），一并翻译成 409
+            image_ref = browser_runtime.resolve_image(kernel, browser.kernel_version)
+            if live is not None and _port_free(live[0]) and _port_free(live[1]):
+                # 容器在但已停止：沿用原端口，实例地址不会启动一次换一次
+                cdp_port, vnc_port = live
+            else:
+                cdp_port, vnc_port = await _allocate_ports(session, browser)
+            await browser_runtime.start_container(
+                browser.id,
+                image_ref=image_ref,
+                cdp_port=cdp_port,
+                vnc_port=vnc_port,
+                instance_name=browser.name,
+                proxy=browser_runtime.proxy_argument(ip),
+                fingerprint=fingerprint,
+            )
     except ContainerError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
@@ -793,7 +806,9 @@ async def _restart(session: AsyncSession, browser: Browser) -> None:
     两者语义不同：``docker restart`` 保留创建时的代理 / 端口参数，适合「进程
     卡住了」；重建会把当前配置带进去，适合「容器被清掉了」或库里的端口丢了。
     """
-    if browser.vnc_port is None or await browser_runtime.state(browser.id) == "absent":
+    live = await browser_runtime.published_ports(browser.id)
+    if live is None:
+        # 容器不在了（或从没起过）：按当前配置重建，端口重新分配
         await _start(session, browser)
         return
 
@@ -805,9 +820,15 @@ async def _restart(session: AsyncSession, browser: Browser) -> None:
             detail=f"{browser.name} 重启失败：{exc}",
         ) from exc
 
+    # 重启不改发布端口，但库里的记录可能早就漂了；以容器的真实端口为准回写，
+    # 免得重启后 noVNC 地址指向一个没人监听的端口
+    cdp_port, vnc_port = live
     browser.status = BrowserStatus.running
     browser.started_at = utcnow()
     browser.last_active_at = utcnow()
+    browser.cdp_url = f"http://127.0.0.1:{cdp_port}"
+    browser.vnc_port = vnc_port
+    browser.vnc_url = f"http://127.0.0.1:{vnc_port}/vnc.html?autoconnect=1&resize=scale"
     browser.updated_at = utcnow()
 
 

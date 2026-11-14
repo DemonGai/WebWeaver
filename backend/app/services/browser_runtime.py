@@ -124,6 +124,40 @@ async def state(browser_id: UUID | str) -> str:
     return await _state(container_name(browser_id))
 
 
+async def published_ports(browser_id: UUID | str) -> tuple[int, int] | None:
+    """容器实际发布到宿主机的 ``(CDP, noVNC)`` 端口；容器不在或没发布返回 None。
+
+    端口必须问 Docker，不能只信数据库。``docker restart``、手工 ``docker start``、
+    进程异常退出后重建都不会经过我们写库，库里记的值随时可能落后于事实；拿旧值
+    去拼 noVNC 地址，用户看到的就是一个没人监听的端口。
+    """
+    proc = await asyncio.to_thread(
+        kernel_image.run, ["port", container_name(browser_id)], timeout=20
+    )
+    if proc.returncode != 0:
+        return None
+
+    found: dict[int, int] = {}
+    for line in (proc.stdout or "").splitlines():
+        # 形如 ``6080/tcp -> 0.0.0.0:6081``；IPv6 会再来一行 ``[::]:6081``，
+        # 先出现的那条（通常是 IPv4）就够了
+        if "->" not in line:
+            continue
+        left, right = (part.strip() for part in line.split("->", 1))
+        try:
+            inner = int(left.split("/", 1)[0])
+            outer = int(right.rsplit(":", 1)[-1])
+        except ValueError:
+            continue
+        found.setdefault(inner, outer)
+
+    cdp = found.get(CONTAINER_CDP_PORT)
+    vnc = found.get(CONTAINER_NOVNC_PORT)
+    if cdp is None or vnc is None:
+        return None
+    return cdp, vnc
+
+
 async def start_container(
     browser_id: UUID | str,
     *,

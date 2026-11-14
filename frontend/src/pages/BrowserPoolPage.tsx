@@ -9,6 +9,7 @@ import { Card, Checkbox, PillTabs, SearchInput, type Tone } from '@/components/u
 import { StatTile } from '@/components/StatTile'
 import { SelectMenu } from '@/components/SelectMenu'
 import { BrowserDialog } from '@/components/BrowserDialog'
+import { IdBadge } from '@/components/IdBadge'
 import { Modal } from '@/components/Modal'
 import {
   IconBolt,
@@ -240,6 +241,11 @@ export default function BrowserPoolPage() {
         subtitle="每个实例可独立绑定账号、出口 IP 与浏览器指纹，并通过 noVNC 实时接管"
         actions={
           <>
+            {/* 所有实例的画面入口集中在一页：这里只留一个门，卡片上的按钮仍直接进单台 */}
+            <button type="button" className="btn-ghost" onClick={() => navigate('/novnc')}>
+              <IconMonitor size={14} />
+              noVNC 详情
+            </button>
             <button type="button" className="btn-ghost" onClick={reload}>
               <IconRefresh size={14} />
               刷新
@@ -869,29 +875,6 @@ function InstanceCard({
         </div>
       </div>
     </Card>
-  )
-}
-
-/**
- * 实例 ID 徽标，卡片与列表共用。
- *
- * UUID 36 位放不下，只露前 8 位做「看得出是哪台」的凭据；完整值放在 title 里，
- * 点一下复制，日志里对号时不用再翻详情页。
- */
-function IdBadge({ id, onCopy }: { id: string; onCopy: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        // 卡片/行本身可能有其它点击行为，别让复制连带触发
-        e.stopPropagation()
-        onCopy()
-      }}
-      title={`${id}\n点击复制完整 ID`}
-      className="shrink-0 rounded-[5px] border border-[var(--line)] bg-[#f7f7f8] px-1 py-px font-mono text-[10px] leading-[14px] text-[var(--ink-500)] transition-colors hover:border-[#d9d9e0] hover:bg-[#f0f0f2] hover:text-[var(--ink-700)]"
-    >
-      {id.slice(0, 8)}
-    </button>
   )
 }
 

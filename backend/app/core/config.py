@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # 单个镜像拉取超时（秒）。500MB 压缩层的国内速度下留足余量
     kernel_image_pull_timeout: int = 1800
 
+    # noVNC 地址里用的主机名。留空就跟随浏览器访问控制台时的 host，这样从别的
+    # 机器打开页面，画面地址也指向这台宿主机；部署在反代后面时显式配一个外网域名。
+    novnc_host: str | None = None
+
     # ── 内核文件（旧：磁盘目录方式，已弃用） ───────────────────────────
     # 保留字段只为兼容还没迁移完的部署，新逻辑不再读写这个目录
     kernel_root: str = "browser_engine"

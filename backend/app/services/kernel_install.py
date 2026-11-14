@@ -19,7 +19,7 @@ from datetime import datetime
 from loguru import logger
 
 from app.schemas.kernels import InstallJob
-from app.services import kernel_image, kernel_scan
+from app.services import browser_novnc, kernel_image, kernel_scan
 from app.services.kernel_image import DockerError
 
 MAX_JOBS = 20
@@ -144,6 +144,8 @@ async def _run(item: InstallJob) -> None:
     item.status = "success"
     item.message = conclusion or "拉取完成"
     item.finished_at = _now()
+    # 同一个 tag 可能被重新构建过，noVNC 能力判定不能继续用旧镜像的结论
+    browser_novnc.forget(item.image_ref)
     logger.info("镜像就绪 {}（{}）", item.image_ref, item.message)
 
 

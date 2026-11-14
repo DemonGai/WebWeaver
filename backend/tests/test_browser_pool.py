@@ -6,6 +6,7 @@
 
 import asyncio
 from collections.abc import Iterator
+from subprocess import CompletedProcess
 from uuid import UUID
 
 import pytest
@@ -23,7 +24,7 @@ from app.models import (
     Kernel,
     KernelStatus,
 )
-from app.services import browser_runtime, kernel_image, kernel_scan
+from app.services import browser_novnc, browser_runtime, kernel_image, kernel_scan
 from app.services.kernel_image import ImageInfo
 from app.services.seed import DEMO_PASSWORD
 
@@ -606,3 +607,124 @@ def test_actions_are_audited(seeded_database: None) -> None:
     # 启停要记录状态变化，否则「几点停的、从什么状态停的」查不回来
     start_row = next(row for row in mine if row["action"] == "start")
     assert start_row["changes"]["status"]["after"] == "running"
+
+
+# ── noVNC 能力检测与可接管清单 ────────────────────────────────
+
+
+def _label_image(label: str | None) -> ImageInfo:
+    labels = {"org.opencontainers.image.version": "128.0.6613.2"}
+    if label is not None:
+        labels[browser_novnc.NOVNC_LABEL] = label
+    return ImageInfo(
+        ref="demo/browser_engine:cloakbrowser-128.0.6613.2",
+        repository="demo/browser_engine",
+        tag="cloakbrowser-128.0.6613.2",
+        image_id="sha256:label",
+        size_bytes=1,
+        created_at="2026-11-10T13:50:54Z",
+        labels=labels,
+    )
+
+
+def test_novnc_capability_trusts_image_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    browser_novnc.forget()
+    monkeypatch.setattr(kernel_image, "inspect", lambda _ref: _label_image("0"))
+
+    cap = browser_novnc.detect("demo/browser_engine:cloakbrowser-128.0.6613.2")
+    assert cap.supported is False
+    assert "WITH_VNC=0" in cap.reason
+    assert cap.source == "label"
+
+
+def test_novnc_capability_falls_back_to_build_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    """老镜像没有能力标签，靠构建历史里装 noVNC 那一层判定。"""
+    browser_novnc.forget()
+    monkeypatch.setattr(kernel_image, "inspect", lambda _ref: _label_image(None))
+    monkeypatch.setattr(
+        kernel_image,
+        "run",
+        lambda args, **_k: CompletedProcess(
+            args, 0, "RUN apt-get install xvfb x11vnc novnc websockify", ""
+        ),
+    )
+
+    cap = browser_novnc.detect("demo/browser_engine:cloakbrowser-128.0.6613.2")
+    assert cap.supported is True
+    assert cap.source == "history"
+
+
+def test_novnc_capability_rejects_headless_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    browser_novnc.forget()
+    monkeypatch.setattr(kernel_image, "inspect", lambda _ref: _label_image(None))
+    monkeypatch.setattr(
+        kernel_image,
+        "run",
+        lambda args, **_k: CompletedProcess(args, 0, "RUN apt-get install xvfb", ""),
+    )
+
+    cap = browser_novnc.detect("demo/browser_engine:cloakbrowser-128.0.6613.2")
+    assert cap.supported is False
+    assert "没有 noVNC" in cap.reason
+
+
+def test_novnc_overview_reports_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
+    """没启动时给「先启动」的理由，启动后才有地址与端口。"""
+    token = _login()
+    item = _create(f"{TEST_PREFIX}novnc-01", token)
+    monkeypatch.setattr(
+        browser_novnc, "detect", lambda _ref: browser_novnc.Capability(True, "", "label")
+    )
+
+    body = client.get("/api/browsers/novnc").json()
+    row = next(x for x in body["instances"] if x["id"] == item["id"])
+    assert row["supports_novnc"] is True
+    assert row["ready"] is False
+    assert row["availability"] == "stopped"
+    assert row["url"] is None
+    assert "未启动" in row["reason"]
+    assert body["totals"]["total"] == len(body["instances"])
+
+    assert _actions(item["id"], "start", token).status_code == 200
+
+    body = client.get("/api/browsers/novnc").json()
+    row = next(x for x in body["instances"] if x["id"] == item["id"])
+    assert row["ready"] is True
+    assert row["availability"] == "ready"
+    # TestClient 的 host 是 testserver，地址跟着请求 host 走
+    assert row["url"] == f"http://testserver:{row['port']}/vnc.html?autoconnect=1&resize=scale"
+    assert body["totals"]["ready"] >= 1
+
+
+def test_novnc_overview_explains_unsupported_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    token = _login()
+    item = _create(f"{TEST_PREFIX}novnc-02", token)
+    monkeypatch.setattr(
+        browser_novnc,
+        "detect",
+        lambda _ref: browser_novnc.Capability(False, "这个镜像里没有 noVNC", "history"),
+    )
+
+    body = client.get("/api/browsers/novnc").json()
+    row = next(x for x in body["instances"] if x["id"] == item["id"])
+    assert row["supports_novnc"] is False
+    assert row["ready"] is False
+    assert row["availability"] == "unsupported"
+    assert row["reason"] == "这个镜像里没有 noVNC"
+
+
+def test_novnc_overview_flags_missing_image_as_blocked() -> None:
+    """版本对不上本地镜像：既不算「镜像不支持」，也不该让用户去点启动。"""
+    token = _login()
+    item = _create(f"{TEST_PREFIX}novnc-03", token, kernel_version="0.0.0")
+
+    body = client.get("/api/browsers/novnc").json()
+    row = next(x for x in body["instances"] if x["id"] == item["id"])
+    assert row["availability"] == "blocked"
+    assert row["supports_novnc"] is False
+    assert "本地没有" in row["reason"]
+    assert body["totals"]["blocked"] >= 1
+
+
+def test_novnc_target_unknown_instance_returns_404() -> None:
+    assert client.get("/api/browsers/not-exist/novnc").status_code == 404

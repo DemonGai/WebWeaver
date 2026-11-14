@@ -1,371 +1,209 @@
-import { Link, useParams } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { endpoints } from '@/api/endpoints'
 import { useApi } from '@/hooks/useApi'
-import {
-  Card,
-  OutlineChip,
-  SectionHeader,
-  SoftChip,
-  StatusDot,
-  type Tone,
-} from '@/components/ui'
+import { copyText } from '@/lib/clipboard'
+import { PageHeader, PageShell } from '@/components/Layout'
+import { Card, SoftChip, type Tone } from '@/components/ui'
+import { IdBadge } from '@/components/IdBadge'
+import { Toast, useToast } from '@/components/Toast'
 import {
   IconArrowLeft,
-  IconChevronRight,
-  IconClipboard,
-  IconDownload,
-  IconExpand,
-  IconGlobe,
-  IconList,
-  IconLock,
+  IconArrowUpRight,
+  IconBrowser,
   IconMonitor,
-  IconPlus,
+  IconPower,
   IconRefresh,
-  IconShield,
-  IconSliders,
-  IconTag,
-  IconUser,
   IconX,
 } from '@/components/icons'
 import { ErrorState, Loading } from './OverviewPage'
-import type { InstanceStatus } from '@/types/domain'
+import type { InstanceStatus, NoVncTarget } from '@/types/domain'
 
-const statusMeta: Record<InstanceStatus, { label: string; tone: Tone }> = {
+const availability: Record<
+  NoVncTarget['availability'],
+  { label: string; tone: Tone; title: string }
+> = {
+  ready: { label: 'noVNC 可用', tone: 'emerald', title: '可以接管' },
+  stopped: { label: '待启动', tone: 'blue', title: '实例还没起来' },
+  unsupported: { label: '镜像无 noVNC', tone: 'rose', title: '这个镜像没有 noVNC' },
+  blocked: { label: '待配置', tone: 'amber', title: '实例还缺内核或镜像' },
+}
+
+const meta: Record<InstanceStatus, { label: string; tone: Tone }> = {
   running: { label: '运行中', tone: 'emerald' },
-  idle: { label: '空间', tone: 'blue' },
+  idle: { label: '空闲', tone: 'blue' },
   error: { label: '异常', tone: 'rose' },
   stopped: { label: '已停止', tone: 'zinc' },
   queued: { label: '排队中', tone: 'amber' },
 }
 
+/**
+ * 单台实例的 noVNC 画面。
+ *
+ * 画面本身是 noVNC 自带网页（容器里的 websockify 提供），这里只做「嵌进去 + 给出
+ * 周边信息」。地址不在前端拼：端口是实例启动时分配的，能力判定也在后端（镜像
+ * 不带 noVNC 时进去只会白屏，那种情况这里直接给出原因）。
+ */
 export default function NoVncPage() {
-  const { id = 'brw-us-west-042' } = useParams()
-  const { data, status, error, reload } = useApi(() => endpoints.novnc(id), [id])
+  const { id = '' } = useParams()
+  const navigate = useNavigate()
+  const { data, status, error, reload } = useApi(() => endpoints.novncTarget(id), [id])
+  // iframe 的 src 不变时 reload 不会重新连接，用 key 强制重建
+  const [nonce, setNonce] = useState(0)
+  const { toast, notify, dismiss } = useToast()
 
-  if (status === 'loading') return <Shell><Loading /></Shell>
-  if (status === 'error')
+  const copyId = async () => {
+    const ok = await copyText(id)
+    notify(ok ? 'ok' : 'err', ok ? '实例 ID 已复制' : '复制失败')
+  }
+
+  if (status === 'loading') {
     return (
-      <Shell>
-        <ErrorState message={error} onRetry={reload} />
-      </Shell>
+      <PageShell>
+        <Loading />
+      </PageShell>
     )
+  }
+  if (status === 'error') {
+    return (
+      <PageShell>
+        <ErrorState message={error} onRetry={reload} />
+      </PageShell>
+    )
+  }
   if (!data) return null
 
-  const { instance, state, account, exit_ip, fingerprint, logs } = data
-  const s = statusMeta[instance.status]
+  const state = meta[data.status]
 
   return (
-    <Shell>
-      {/* 顶部工具栏 */}
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link to="/browsers" className="icon-btn size-8">
-            <IconArrowLeft size={14} />
-          </Link>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-[15px] font-semibold tracking-tight">{instance.name}</h1>
-              <span className="chip bg-emerald-50 text-emerald-600 gap-1">
-                <span className="size-[4px] rounded-full bg-emerald-500" />
-                {instance.connection}
-              </span>
-            </div>
-            <div className="mt-0.5 text-[11px] text-[var(--ink-400)]">
-              noVNC 实时接管 · 分组：{instance.group}
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button type="button" className="btn-ghost">
-            <IconPlus size={13} />
-            新建标签
-          </button>
-          <button type="button" className="btn-ghost">
-            <IconClipboard size={13} />
-            同步剪贴板
-          </button>
-          <button type="button" className="btn-dark">
-            <IconX size={13} />
-            结束会话
-          </button>
-        </div>
+    <PageShell>
+      <PageHeader
+        icon={<IconMonitor size={19} />}
+        title={data.name}
+        subtitle={
+          data.ready
+            ? 'noVNC 实时接管 · 画面来自容器内的 websockify，关掉页面不会结束会话'
+            : '当前不可接管，下方给出原因与下一步'
+        }
+        actions={
+          <>
+            <button type="button" className="btn-ghost" onClick={() => navigate('/novnc')}>
+              <IconArrowLeft size={14} />
+              返回 noVNC 列表
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setNonce((n) => n + 1)}
+              disabled={!data.ready}
+            >
+              <IconRefresh size={14} />
+              重载画面
+            </button>
+            {data.url && (
+              <a className="btn-dark" href={data.url} target="_blank" rel="noreferrer">
+                <IconArrowUpRight size={14} />
+                新窗口打开
+              </a>
+            )}
+          </>
+        }
+      />
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <IdBadge id={data.id} onCopy={copyId} />
+        <SoftChip tone={state.tone}>{state.label}</SoftChip>
+        <SoftChip tone={availability[data.availability].tone}>
+          {availability[data.availability].label}
+        </SoftChip>
+        {data.kernel && (
+          <SoftChip tone="zinc">
+            {data.kernel}
+            {data.kernel_version ? ` · ${data.kernel_version}` : ''}
+          </SoftChip>
+        )}
+        {data.port && <span className="tnum text-[11px] text-[var(--ink-400)]">端口 {data.port}</span>}
       </div>
 
-      <div className="grid grid-cols-12 gap-4">
-        {/* 左侧：浏览器画面 */}
-        <Card className="col-span-8 flex flex-col overflow-hidden">
-          {/* 地址栏 */}
-          <div className="flex items-center gap-2 border-b border-[var(--line)] px-4 py-2.5">
-            <div className="flex items-center gap-1 text-[var(--ink-400)]">
-              <button type="button" className="icon-btn size-6 !border-transparent">
-                <IconArrowLeft size={12} />
+      <Card className="overflow-hidden">
+        {data.ready && data.url ? (
+          <iframe
+            key={nonce}
+            src={data.url}
+            title={`${data.name} 的 noVNC 画面`}
+            className="h-[calc(100vh-300px)] min-h-[520px] w-full border-0 bg-[#f7f7f8]"
+            allow="clipboard-read; clipboard-write; fullscreen"
+          />
+        ) : (
+          <div className="flex min-h-[420px] flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+            <span className="flex size-12 items-center justify-center rounded-2xl bg-[#f4f4f5] text-[var(--ink-400)]">
+              {data.availability === 'stopped' ? <IconPower size={20} /> : <IconX size={20} />}
+            </span>
+            <div>
+              <p className="text-[14px] font-medium text-[var(--ink-900)]">
+                {availability[data.availability].title}
+              </p>
+              <p className="mt-1 max-w-[420px] text-[12px] leading-relaxed text-[var(--ink-500)]">
+                {data.reason ?? '暂时拿不到画面地址'}
+              </p>
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => navigate('/browsers')}
+              >
+                <IconBrowser size={13} />
+                回浏览器池处理
               </button>
-              <button type="button" className="icon-btn size-6 !border-transparent">
-                <IconChevronRight size={12} />
-              </button>
-              <button type="button" className="icon-btn size-6 !border-transparent">
-                <IconRefresh size={12} />
+              <button type="button" className="btn-ghost" onClick={reload}>
+                <IconRefresh size={13} />
+                重新检测
               </button>
             </div>
-            <div className="flex h-7 flex-1 items-center gap-2 rounded-full bg-[#f7f7f8] px-3 text-[11.5px] text-[var(--ink-700)]">
-              <IconLock size={10} className="text-emerald-500" />
-              {instance.url}
-              <span className="ml-auto text-[var(--ink-400)]">
-                <IconTag size={10} />
-              </span>
-            </div>
-            <OutlineChip>{instance.quality === '高清' ? '1440 × 900' : instance.quality}</OutlineChip>
-            <button type="button" className="icon-btn size-7">
-              <IconExpand size={12} />
-            </button>
           </div>
-
-          {/* 标签页 */}
-          <div className="flex items-center gap-1.5 border-b border-[var(--line)] px-4 py-2">
-            <TabChip active label="Seller Dashboard" />
-            <TabChip label="Order Center" />
-            <button type="button" className="flex size-6 items-center justify-center rounded-md text-[var(--ink-400)] hover:bg-[#f4f4f5]">
-              <IconPlus size={12} />
-            </button>
-          </div>
-
-          {/* 画面 */}
-          <div className="relative min-h-[420px] flex-1 bg-[linear-gradient(125deg,#7a6c5d_0%,#a3937f_35%,#d8d3ca_62%,#8f8274_100%)]">
-            <div className="absolute inset-0 bg-[radial-gradient(110%_80%_at_20%_8%,rgba(255,255,255,0.5),transparent_58%)]" />
-            <div className="absolute top-8 left-10 h-32 w-40 rounded-sm bg-white/40 blur-[1px]" />
-            <div className="absolute bottom-12 left-1/3 h-20 w-28 rounded-md bg-[#8a4b2a]/45" />
-          </div>
-
-          {/* 状态栏 */}
-          <div className="flex items-center justify-between border-t border-[var(--line)] px-4 py-2.5">
-            <div className="flex items-center gap-4 text-[11px] text-[var(--ink-500)]">
-              <span className="flex items-center gap-1">
-                <IconMonitor size={11} />
-                {instance.fps} fps
-              </span>
-              <span className="flex items-center gap-1">
-                <IconRefresh size={11} />
-                {instance.latency_ms} ms
-              </span>
-              <span className="flex items-center gap-1">
-                <IconShield size={11} className="text-emerald-500" />
-                WebSocket 已加密
-              </span>
-              <span className="flex items-center gap-1">
-                <IconList size={11} />
-                会话 {instance.session_time}
-              </span>
-            </div>
-            <button type="button" className="btn-ghost !h-7 !px-3 !text-[11px]">
-              画质：{instance.quality}
-              <IconSliders size={10} />
-            </button>
-          </div>
-        </Card>
-
-        {/* 右侧信息面板 */}
-        <div className="col-span-4 space-y-4">
-          <div className="rounded-2xl bg-[linear-gradient(120deg,#192236_0%,#283448_100%)] p-5 text-white">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-white/50">实例状态</span>
-              <span className="text-white/40">
-                <IconMonitor size={13} />
-              </span>
-            </div>
-            <div className="mt-2 flex items-center gap-2">
-              <span className="text-[22px] font-semibold">{s.label}</span>
-              <span className="size-[6px] rounded-full bg-emerald-400" />
-            </div>
-            <div className="mt-4 space-y-2 border-t border-white/10 pt-3">
-              <DarkRow label="启动时间" value={state.started_at} />
-              <DarkRow label="内核版本" value={state.kernel} />
-              <DarkRow label="内存占用" value={state.memory} />
-            </div>
-          </div>
-
-          <Card className="p-5">
-            <SectionHeader
-              icon={<IconUser size={14} />}
-              title="绑定账号"
-              extra={
-                <span className="text-[var(--ink-400)]">
-                  <IconSliders size={12} />
-                </span>
-              }
-            />
-            <div className="mt-3 flex items-center gap-2.5">
-              <span className="flex size-8 items-center justify-center rounded-lg bg-blue-50 text-[12px] font-semibold text-blue-500">
-                {account.name.slice(5, 6).toUpperCase() || 'S'}
-              </span>
-              <div>
-                <div className="text-[12.5px] font-medium">{account.name}</div>
-                <div className="text-[10.5px] text-[var(--ink-400)]">
-                  {account.platform} · {account.region}
-                </div>
-              </div>
-            </div>
-            <div className="mt-3 flex items-center gap-1.5">
-              {account.tags.map((t) => (
-                <SoftChip key={t} tone="emerald">
-                  {t}
-                </SoftChip>
-              ))}
-            </div>
-          </Card>
-
-          <Card className="p-5">
-            <SectionHeader
-              icon={<IconGlobe size={14} />}
-              title="出口 IP"
-              extra={
-                <span className="text-[var(--ink-400)]">
-                  <IconGlobe size={12} />
-                </span>
-              }
-            />
-            <div className="tnum mt-3 text-[17px] font-semibold tracking-tight">{exit_ip.ip}</div>
-            <div className="mt-2 flex items-center gap-1.5">
-              <SoftChip tone="blue">{exit_ip.location}</SoftChip>
-              <SoftChip tone="blue">{exit_ip.type}</SoftChip>
-            </div>
-            <div className="mt-3 flex items-center justify-between rounded-lg bg-[#fafafa] px-3 py-2 text-[11px]">
-              <span className="text-[var(--ink-500)]">代理延迟</span>
-              <span className="tnum font-medium">{exit_ip.latency_ms} ms</span>
-            </div>
-          </Card>
-
-          <Card className="p-5">
-            <SectionHeader
-              icon={<IconShield size={14} />}
-              title="浏览器指纹"
-              extra={
-                <span className="text-[11px] font-medium text-emerald-600">
-                  可信度 {fingerprint.score}%
-                </span>
-              }
-            />
-            <div className="mt-3 space-y-2">
-              <FpRow label="User-Agent" value={fingerprint.user_agent} />
-              <FpRow label="时区 / 语言" value={fingerprint.timezone} />
-              <FpRow label="分辨率" value={fingerprint.resolution} />
-              <FpRow
-                label="Canvas 噪声"
-                value={fingerprint.canvas_noise ? '已开启' : '未开启'}
-                highlight={fingerprint.canvas_noise}
-              />
-            </div>
-          </Card>
-        </div>
-      </div>
-
-      {/* 操作日志 */}
-      <Card className="mt-4 overflow-hidden">
-        <div className="flex items-center justify-between px-5 pt-4 pb-3">
-          <SectionHeader icon={<IconList size={15} />} title="本次会话操作日志" />
-          <button type="button" className="btn-ghost !h-7 !px-3 !text-[11.5px]">
-            <IconDownload size={11} />
-            导出日志
-          </button>
-        </div>
-        <table className="w-full">
-          <thead>
-            <tr className="border-y border-[var(--line)] bg-[#fcfcfd]">
-              <th className="table-th w-[12%]">时间</th>
-              <th className="table-th w-[16%]">动作</th>
-              <th className="table-th w-[52%]">详情</th>
-              <th className="table-th w-[20%]">结果</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.map((l) => (
-              <tr key={l.time} className="border-b border-[var(--line)] last:border-0">
-                <td className="table-td tnum text-[var(--ink-500)]">{l.time}</td>
-                <td className="table-td">
-                  <span className="flex items-center gap-1.5 font-medium text-[var(--ink-900)]">
-                    <span className="text-[var(--ink-400)]">
-                      <IconTag size={11} />
-                    </span>
-                    {l.action}
-                  </span>
-                </td>
-                <td className="table-td text-[var(--ink-500)]">{l.detail}</td>
-                <td className="table-td">
-                  <span
-                    className={`chip ${
-                      l.result === '成功'
-                        ? 'bg-emerald-50 text-emerald-600'
-                        : 'bg-blue-50 text-blue-600'
-                    }`}
-                  >
-                    {l.result}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        )}
       </Card>
-    </Shell>
+
+      <Card className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 p-4 md:grid-cols-3 xl:grid-cols-6">
+        <Field label="内核">{data.kernel ?? '未绑定'}</Field>
+        <Field label="版本">{data.kernel_version ?? '—'}</Field>
+        <Field label="绑定账号">{data.account}</Field>
+        <Field label="出口 IP">{data.ip}</Field>
+        <Field label="分组">{data.group}</Field>
+        <Field label="镜像" title={data.image ?? ''}>
+          {data.image ?? '—'}
+        </Field>
+      </Card>
+
+      <p className="mt-3 text-[11px] text-[var(--ink-400)]">
+        找不到画面？先确认实例在运行中，再核对镜像是否带 noVNC；
+        <Link to="/novnc" className="ml-1 text-[var(--ink-700)] underline underline-offset-2">
+          回到列表看全部实例
+        </Link>
+        。
+      </p>
+
+      <Toast toast={toast} onClose={dismiss} />
+    </PageShell>
   )
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+  title,
+}: {
+  label: string
+  children: React.ReactNode
+  title?: string
+}) {
   return (
-    <div className="min-h-full">
-      <div className="sticky top-0 z-30 border-b border-[var(--line)] bg-white/95 backdrop-blur">
-        <div className="flex h-16 w-full items-center gap-2 px-7">
-          <Link
-            to="/"
-            className="flex size-8 items-center justify-center rounded-lg border border-[var(--line)] text-[var(--ink-500)] hover:bg-[#f7f7f8]"
-          >
-            <IconArrowLeft size={14} />
-          </Link>
-          <span className="text-[12.5px] font-medium text-[var(--ink-700)]">WebWeaver</span>
-          <span className="text-[12px] text-[var(--ink-400)]">/ 浏览器池 / noVNC 实时接管</span>
-        </div>
+    <div className="min-w-0">
+      <div className="text-[10.5px] text-[var(--ink-400)]">{label}</div>
+      <div className="mt-1 truncate text-[12px] font-medium text-[var(--ink-700)]" title={title}>
+        {children}
       </div>
-      <main className="w-full px-7 py-5">{children}</main>
     </div>
   )
-}
-
-function TabChip({ label, active }: { label: string; active?: boolean }) {
-  return (
-    <span
-      className={`inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] ${
-        active
-          ? 'bg-white font-medium text-[var(--ink-900)] ring-1 ring-[var(--line)]'
-          : 'bg-transparent text-[var(--ink-500)] hover:bg-[#f7f7f8]'
-      }`}
-    >
-      <IconTag size={10} className="text-[var(--ink-400)]" />
-      {label}
-      <IconX size={9} className="text-[var(--ink-400)]" />
-    </span>
-  )
-}
-
-function DarkRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between text-[11px]">
-      <span className="text-white/45">{label}</span>
-      <span className="font-medium text-white/90">{value}</span>
-    </div>
-  )
-}
-
-function FpRow({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
-  return (
-    <div className="flex items-center justify-between text-[11px]">
-      <span className="text-[var(--ink-400)]">{label}</span>
-      <span className={highlight ? 'font-medium text-emerald-600' : 'font-medium text-[var(--ink-700)]'}>
-        {value}
-      </span>
-    </div>
-  )
-}
-
-// 供其他页面可能的空状态使用
-export function EmptyStatus({ tone, label }: { tone: Tone; label: string }) {
-  return <StatusDot tone={tone} label={label} />
 }

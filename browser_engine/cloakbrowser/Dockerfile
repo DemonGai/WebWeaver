@@ -37,9 +37,12 @@ ARG APT_MIRROR
 ARG WITH_VNC=1
 ARG DEBIAN_FRONTEND=noninteractive
 
+# com.webweaver.novnc：给后端判定「这个镜像能不能看画面」用。没有这个标签时后端
+# 只能翻构建历史，有了它就是确定值（WITH_VNC=0 构建出来的镜像不该出现 noVNC 入口）
 LABEL org.opencontainers.image.title="cloakbrowser" \
       org.opencontainers.image.description="CloakBrowser ${CLOAKBROWSER_VERSION} 反检测内核运行时" \
-      org.opencontainers.image.version="${CLOAKBROWSER_VERSION}"
+      org.opencontainers.image.version="${CLOAKBROWSER_VERSION}" \
+      com.webweaver.novnc="${WITH_VNC}"
 
 ENV CHROME_DIR=/opt/cloakbrowser \
     HOME=/home/browser \

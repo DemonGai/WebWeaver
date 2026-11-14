@@ -864,3 +864,37 @@ export interface AuditLogList {
   limit: number
   offset: number
 }
+
+/* ── noVNC 接管 ───────────────────────────────────────── */
+export interface NoVncTarget {
+  id: string
+  name: string
+  status: InstanceStatus
+  group: string
+  account: string
+  ip: string
+  kernel: string | null
+  kernel_version: string | null
+  image: string | null
+  port: number | null
+  url: string | null
+  /** 镜像本身带不带 noVNC：不支持时怎么启动都看不了画面 */
+  supports_novnc: boolean
+  /** 当下能不能点进去：还要实例在跑 */
+  ready: boolean
+  /** 结论的机器可读版本：ready 可接管 / stopped 待启动 / unsupported 镜像不支持 / blocked 缺内核或镜像 */
+  availability: 'ready' | 'stopped' | 'unsupported' | 'blocked'
+  /** 不可用时的下一步动作，例如「先启动实例」 */
+  reason: string | null
+}
+
+export interface NoVncOverview {
+  totals: {
+    total: number
+    ready: number
+    unsupported: number
+    offline: number
+    blocked: number
+  }
+  instances: NoVncTarget[]
+}

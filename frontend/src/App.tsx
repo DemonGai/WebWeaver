@@ -4,6 +4,7 @@ import BrowserPoolPage from './pages/BrowserPoolPage'
 import AccountsPage from './pages/AccountsPage'
 import IpPoolPage from './pages/IpPoolPage'
 import NoVncPage from './pages/NoVncPage'
+import NoVncListPage from './pages/NoVncListPage'
 import FingerprintsPage from './pages/FingerprintsPage'
 import KernelsPage from './pages/KernelsPage'
 import KernelDetailPage from './pages/KernelDetailPage'
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/browsers" element={<BrowserPoolPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route path="/ip-pool" element={<IpPoolPage />} />
+          <Route path="/novnc" element={<NoVncListPage />} />
           <Route path="/novnc/:id" element={<NoVncPage />} />
           <Route path="/fingerprints" element={<FingerprintsPage />} />
           <Route path="/kernels" element={<KernelsPage />} />

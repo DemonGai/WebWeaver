@@ -32,7 +32,9 @@ import type {
   KernelInstance,
   KernelMigrationResult,
   KernelPayload,
+  NoVncOverview,
   NoVncPayload,
+  NoVncTarget,
   OverviewPayload,
   OverviewRange,
   ProfilePayload,
@@ -84,6 +86,9 @@ export const endpoints = {
   // 模板是 CSV，不能走 JSON 解析
   ipTemplate: () => api.text('/ip-pool/template'),
   novnc: (id: string) => api.get<NoVncPayload>(`/novnc/${id}`),
+  /* noVNC 详情：所有实例的可接管清单 + 单台入口 */
+  novncOverview: () => api.get<NoVncOverview>('/browsers/novnc'),
+  novncTarget: (id: string) => api.get<NoVncTarget>(`/browsers/${id}/novnc`),
   fingerprints: () => api.get<FingerprintPayload>('/fingerprints'),
 
   /* 内核管理 */

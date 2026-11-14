@@ -1,9 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, SessionDep, require_permission
+from app.core.config import settings
 from app.schemas.browser import (
     BrowserActionName,
     BrowserBatchResult,
@@ -12,9 +13,11 @@ from app.schemas.browser import (
     BrowserMutationResult,
     BrowserOptions,
     BrowserUpdate,
+    NoVncOverview,
+    NoVncTarget,
 )
 from app.schemas.domain import BrowserPoolPayload
-from app.services import browser_pool, cluster
+from app.services import browser_novnc, browser_pool, cluster
 from app.services.cluster import Snapshot, get_snapshot
 
 router = APIRouter(tags=["browsers"])
@@ -49,6 +52,38 @@ async def get_browser_options(
     ] = None,
 ) -> BrowserOptions:
     return await browser_pool.options(session, browser_id)
+
+
+@router.get(
+    "/browsers/novnc",
+    response_model=NoVncOverview,
+    summary="所有实例的 noVNC 可接管清单",
+)
+async def get_novnc_overview(
+    request: Request,
+    snapshot: Annotated[Snapshot, Depends(get_snapshot)],
+) -> NoVncOverview:
+    return browser_novnc.overview(snapshot, _novnc_host(request))
+
+
+# 同样要排在 /browsers/{browser_id} 前面：这里的固定段是第二段，不受影响，
+# 但仍放在详情接口之前，读路由表时顺序更直观
+@router.get(
+    "/browsers/{browser_id}/novnc",
+    response_model=NoVncTarget,
+    summary="单台实例的 noVNC 入口",
+)
+async def get_instance_novnc(
+    browser_id: str,
+    request: Request,
+    snapshot: Annotated[Snapshot, Depends(get_snapshot)],
+) -> NoVncTarget:
+    try:
+        return browser_novnc.target(snapshot, browser_id, _novnc_host(request))
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"实例 {browser_id} 不存在"
+        ) from exc
 
 
 @router.get("/browsers/{browser_id}", response_model=BrowserDetail, summary="实例详情")
@@ -158,3 +193,15 @@ async def run_browser_batch(
     return await browser_pool.batch(
         session, payload.ids, payload.action, operator=user.username, request=request
     )
+
+
+def _novnc_host(request: Request) -> str:
+    """noVNC 地址里的主机名。
+
+    优先级：配置的 ``NOVNC_HOST`` > 请求头里的 host > 本机回环。用请求 host 是为了
+    从别的机器打开控制台时，画面地址也指向同一台宿主机，而不是浏览器自己电脑上的
+    127.0.0.1。
+    """
+    if settings.novnc_host:
+        return settings.novnc_host
+    return request.url.hostname or "127.0.0.1"

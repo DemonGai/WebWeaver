@@ -163,3 +163,46 @@ class BrowserBatchResult(BaseModel):
 class BrowserMutationResult(BaseModel):
     ok: bool
     message: str
+
+class NoVncTarget(BaseModel):
+    """一台实例的 noVNC 可接管情况。
+
+    ``supports_novnc`` 是镜像能力（这个镜像里到底有没有 noVNC），``ready`` 是
+    当下能不能点进去看（还要实例在跑）。两者分开，界面才能把「镜像不支持」
+    和「先启动一下」区分开。
+    """
+
+    id: str
+    name: str
+    status: InstanceStatus
+    group: str
+    account: str
+    ip: str
+    kernel: str | None = None
+    kernel_version: str | None = None
+    image: str | None = None
+    port: int | None = None
+    url: str | None = None
+    supports_novnc: bool
+    ready: bool
+    # 一句话结论的机器可读版本：ready / stopped / unsupported / blocked。
+    # 界面据此选文案与按钮，不用去解析 reason 字符串
+    availability: Literal["ready", "stopped", "unsupported", "blocked"]
+    # 不可用时的一句话：告诉用户下一步做什么，而不是只报「不可用」
+    reason: str | None = None
+
+
+class NoVncTotals(BaseModel):
+    total: int
+    ready: int
+    # 镜像层面就不带 noVNC 的台数：这部分无论怎么启动都看不了画面
+    unsupported: int
+    # 支持 noVNC 但当前没在跑的台数：启动后就能接管
+    offline: int
+    # 连镜像都还没有的台数：既不是「不支持」，也不是「启动一下就好」
+    blocked: int
+
+
+class NoVncOverview(BaseModel):
+    totals: NoVncTotals
+    instances: list[NoVncTarget]

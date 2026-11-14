@@ -847,11 +847,28 @@ async def _allocate_ports(session: AsyncSession, browser: Browser) -> tuple[int,
 
 
 def _port_free(port: int) -> bool:
-    """宿主机这个端口能不能绑。
+    """宿主机这个端口能不能用。
+
+    先连一下再 bind，两个都要过：
+
+    - **只 bind 不够**：Windows 上 docker-proxy 用 ``SO_REUSEADDR`` 绑着端口，
+      另一个进程照样能 bind 成功（实测就这么把已被 6080 占用的端口分配出去了，
+      结果 ``docker run`` 在发布端口那一步失败）；
+    - **只 connect 不够**：端口没人监听、但被系统保留（Hyper-V 的动态端口区间）
+      时连不上也绑不上。
 
     Windows 上不能开 ``SO_REUSEADDR``：那会让 bind 在已被监听的端口上照样成功，
     检测就完全失效了。
     """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(0.2)
+    try:
+        # 本机有服务在听，就当这个端口不可用；连不上（拒绝连接）才是空闲
+        if probe.connect_ex(("127.0.0.1", port)) == 0:
+            return False
+    finally:
+        probe.close()
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         # 绑 0.0.0.0 与 docker 发布端口的绑定方式一致，能同时发现绑回环的服务

@@ -69,9 +69,11 @@ ARG APT_MIRROR
 ARG WITH_VNC=1
 ARG DEBIAN_FRONTEND=noninteractive
 
+# com.webweaver.novnc：给后端判定「这个镜像能不能看画面」用，取值跟 WITH_VNC 一致
 LABEL org.opencontainers.image.title="fingerprint-chromium" \
       org.opencontainers.image.description="fingerprint-chromium ${FP_VERSION} 指纹种子内核运行时" \
-      org.opencontainers.image.version="${FP_VERSION}"
+      org.opencontainers.image.version="${FP_VERSION}" \
+      com.webweaver.novnc="${WITH_VNC}"
 
 ENV CHROME_DIR=/opt/chromium \
     HOME=/home/browser \

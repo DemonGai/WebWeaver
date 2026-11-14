@@ -849,16 +849,25 @@ async def _allocate_ports(session: AsyncSession, browser: Browser) -> tuple[int,
 
     只看数据库不够：本机可能已经有手工起的容器、或者别的服务占着 6080，
     ``docker run`` 会在发布端口那一步直接失败。所以两者都要避开。
+
+    后端跑在容器里时 bind 探测看不到宿主机，再问一次 Docker 正在发布的端口。
     """
     used = set(
         await session.scalars(
             select(Browser.vnc_port).where(Browser.vnc_port.is_not(None), Browser.id != browser.id)
         )
     )
+    published = await browser_runtime.published_host_ports()
     vnc_port = VNC_PORT_BASE
     for _ in range(PORT_SCAN_LIMIT):
         cdp_port = vnc_port + CDP_PORT_OFFSET
-        if vnc_port not in used and _port_free(vnc_port) and _port_free(cdp_port):
+        if (
+            vnc_port not in used
+            and vnc_port not in published
+            and cdp_port not in published
+            and _port_free(vnc_port)
+            and _port_free(cdp_port)
+        ):
             return cdp_port, vnc_port
         vnc_port += 1
     raise HTTPException(

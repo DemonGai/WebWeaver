@@ -8,7 +8,8 @@
 
 ```
 WebWeaver/
-├── docker-compose.yml            # PostgreSQL 18（webweaver-postgres）
+├── Dockerfile                    # 一体化镜像：PostgreSQL + FastAPI + 前端页面
+├── docker-compose.yml            # 一体化部署（服务名 webweaver）；dev profile 里是独立 PostgreSQL
 ├── frontend/                     # 前端工程（bun 管理）
 │   ├── index.html
 │   ├── package.json
@@ -66,27 +67,44 @@ WebWeaver/
 
 ## 启动
 
-### 1. 数据库（PostgreSQL 18，端口 5432）
+### 0. 一体化部署（数据库 + 后端 + 页面在同一个容器里）
 
 ```bash
-docker compose up -d          # 首次会拉取 postgres:18 并创建 webweaver-pgdata 卷
-docker compose ps             # 期望状态：Up (healthy)
+docker compose up -d --build                 # 首次构建约 5~10 分钟（装 PostgreSQL 与 Python 依赖）
+docker compose logs -f webweaver             # 看到 “Uvicorn running on http://0.0.0.0:8000” 即就绪
+```
+
+打开 http://127.0.0.1:8000 ，用 `admin / admin` 登录（首启自动建库、跑迁移、写超管）。
+
+- **一个容器三件事**：PostgreSQL（只监听容器内 127.0.0.1）、uvicorn（同时托管前端 dist）、docker CLI。
+- **浏览器实例是兄弟容器**：`/var/run/docker.sock` 挂进容器，页面里的启动 / 停止 / 重启 / 删除
+  都作用在宿主机 Docker 上，`docker ps` 里直接能看到 `wv-*` 与实例 ID 命名的容器。
+- **端口**：`APP_PORT`（默认 8000）是控制台端口；实例的 noVNC 端口仍发布在宿主机 6080+，
+  页面里的画面地址跟随访问控制台时的 host，也可用 `NOVNC_HOST` 显式指定。
+- **配置**：`AUTH_JWT_SECRET` 生产必须改；`DB_PASSWORD` 可改；改了 `DB_PASSWORD` 后重建容器即可生效。
+- **数据**：命名卷 `webweaver-appdata`，`docker compose down` 不删数据，`down -v` 才会。
+
+### 1. 数据库（仅本机开发需要，PostgreSQL 18，端口 5432）
+
+```bash
+docker compose --profile dev up -d postgres   # 首次会拉取 postgres:18 并创建 webweaver-pgdata-dev 卷
+docker compose ps                             # 期望状态：Up (healthy)
 ```
 
 - 连接串：`postgresql://webweaver:webweaver@127.0.0.1:5432/webweaver`
-- 数据持久化在命名卷 `webweaver-pgdata`；`docker compose down -v` 会连同数据一起删除。
+- 数据持久化在命名卷 `webweaver-pgdata-dev`；`docker compose down -v` 会连同数据一起删除。
 - 本机若 `docker compose` 不可用，可直接用 `docker-compose.exe up -d`（compose v2 独立版）。
 
 ### 2. 后端（端口 8010）
 
-> 端口用 8010 而非 8000：本机 Docker Desktop 的 `com.docker.backend.exe` 已占用 8000/8080。
+> 开发期端口用 8010，与一体化部署占用的 8000 错开，两个进程可以同时跑。
 
 ```bash
 cd backend
 cp .env.example .env                     # 首次：按需改 DATABASE_URL
 uv sync                                  # 首次：创建 .venv 并安装依赖
 uv run alembic upgrade head              # 首次 / 拉取新迁移后：建表或升级表结构
-uv run python -m app.services.seed       # 首次：写入演示数据（幂等，可加 --reset 重建）
+uv run python -m app.services.seed       # 首次：写工作区 / 权限 / 角色 / 超管（幂等）
 uv run uvicorn app.main:app --reload --port 8010
 ```
 
@@ -171,11 +189,10 @@ IP 与指纹都允许「不指向具体资源」的默认取值，这两种是�
 
 字段是这样拼出来的（都是库里真实字段，不是硬编码）：实例卡片的 `group` / `account` / `ip` / `fingerprint` 来自四个外键的 join；`started_at`、事件时间用 `_humanize()` 转成「2 小时前」；IP 地区分布按国家码聚合到美国 / 欧洲 / 亚洲 / 其他；账号的 `bound_instance`、IP 的 `bound_instance` 反查 `browsers`。
 
-`services/seed.py` 写入演示数据：6 个分组、4 个内核、8 个指纹模板、12 个 IP、8 个账号、8 个浏览器实例，状态覆盖 running / idle / queued / error / stopped，方便前端把各种态都渲染出来。其中 `brw-au-syd-011` 走 **直连 + 默认指纹**，其余用代理与模板；同时写入 25 条绑定日志（含一条「换 IP」的解绑 + 绑定历史）。
+`services/seed.py` 只写初始化数据：默认工作区 `webweaver-team`、35 个权限点、4 个内置角色、超级管理员 `admin / admin`。演示用的分组 / 内核 / 账号 / IP / 实例都在 `backend/tests/demo_cluster.py` 里，只有测试会用到，不进部署库。
 
 ```bash
-uv run python -m app.services.seed           # 空库时写入
-uv run python -m app.services.seed --reset   # 清空全部表后重建（含绑定日志与 RBAC）
+uv run python -m app.services.seed   # 幂等：缺什么补什么，可反复执行
 ```
 
 仍是固定值、需要后续接入的部分（接口形状已固定，替换实现即可）：

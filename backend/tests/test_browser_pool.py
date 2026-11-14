@@ -123,6 +123,11 @@ def fake_containers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(browser_runtime, "remove_container", remove_container)
     monkeypatch.setattr(browser_runtime, "state", state)
     monkeypatch.setattr(browser_runtime, "published_ports", published_ports)
+    # 端口分配会问一次「宿主机已发布端口」；测试里不该真跑 docker ps
+    async def published_host_ports() -> set[int]:
+        return {port for pair in ports.values() for port in pair}
+
+    monkeypatch.setattr(browser_runtime, "published_host_ports", published_host_ports)
     # 镜像解析也不查 docker：真实 ref 长什么样与状态流转无关
     monkeypatch.setattr(
         browser_runtime, "resolve_image", lambda *_a, **_k: "demo/browser_engine:test"

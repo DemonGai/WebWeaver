@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     # 机器打开页面，画面地址也指向这台宿主机；部署在反代后面时显式配一个外网域名。
     novnc_host: str | None = None
 
+    # 打包部署时前端构建产物（dist）的目录。留空则只提供 API，页面由 Vite / 反向
+    # 代理出；单容器部署把它指向 /app/frontend/dist，由 FastAPI 顺带托管页面。
+    frontend_dist: str | None = None
+
     # ── 内核文件（旧：磁盘目录方式，已弃用） ───────────────────────────
     # 保留字段只为兼容还没迁移完的部署，新逻辑不再读写这个目录
     kernel_root: str = "browser_engine"

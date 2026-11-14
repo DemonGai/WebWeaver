@@ -1,0 +1,13 @@
+# 运行时依赖（与 pyproject.toml 的 [project].dependencies 保持一致）。
+# 镜像构建用：pip install -r requirements.txt
+# 本地开发仍用 uv sync，这个文件只服务于容器打包。
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+python-multipart>=0.0.12
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.30.0
+loguru>=0.7.3
+sqlmodel>=0.0.48
+alembic>=1.20.1

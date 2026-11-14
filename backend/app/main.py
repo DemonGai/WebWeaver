@@ -1,8 +1,11 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core import db
@@ -64,15 +67,46 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix=settings.api_prefix)
 
-    @app.get("/", include_in_schema=False)
-    async def root() -> dict[str, str]:
-        return {
-            "service": settings.app_name,
-            "docs": "/docs",
-            "health": f"{settings.api_prefix}/health",
-        }
+    # 单容器部署：前端构建产物由同一个进程顺带托管，省掉 nginx 那层。
+    # 只有显式配了 FRONTEND_DIST 且目录里真有 index.html 才启用；开发期不配，
+    # 行为与前后端分离时完全一致。
+    dist = _frontend_dist()
+    if dist is None:
+
+        @app.get("/", include_in_schema=False)
+        async def root() -> dict[str, str]:
+            return {
+                "service": settings.app_name,
+                "docs": "/docs",
+                "health": f"{settings.api_prefix}/health",
+            }
+
+    else:
+        # 静态资源按目录挂载（带 ETag / 缓存头）；其余路径交给 SPA 兜底，
+        # 这样刷新 /browsers 这类前端路由不会 404。
+        app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def spa(full_path: str) -> FileResponse:
+            if full_path:
+                candidate = (dist / full_path).resolve()
+                # 只允许 dist 内的文件，挡住 ../ 之类的目录穿越
+                if candidate.is_file() and candidate.is_relative_to(dist):
+                    return FileResponse(candidate)
+            return FileResponse(dist / "index.html")
 
     return app
+
+
+def _frontend_dist() -> Path | None:
+    """前端 dist 目录；没配置或没构建过就返回 None。"""
+    if not settings.frontend_dist:
+        return None
+    dist = Path(settings.frontend_dist).expanduser().resolve()
+    if not (dist / "index.html").is_file():
+        logger.warning("FRONTEND_DIST 指向的目录没有 index.html，跳过页面托管：{}", dist)
+        return None
+    return dist
 
 
 app = create_app()

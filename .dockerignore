@@ -1,0 +1,27 @@
+# 构建上下文里只留源码，别把本机环境和产物带进去
+.git
+.gitattributes
+.github
+.workbuddy
+README.md
+docker-compose.yml
+
+# 后端
+backend/.venv
+backend/.env
+backend/.env.example
+backend/__pycache__
+backend/**/__pycache__
+backend/.pytest_cache
+backend/.ruff_cache
+backend/logs
+backend/tests
+
+# 前端
+frontend/node_modules
+frontend/dist
+frontend/bun.lock
+
+# 内核镜像源码不参与应用镜像构建
+browser_engine
+scripts

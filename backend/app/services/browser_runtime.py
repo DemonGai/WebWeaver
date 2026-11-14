@@ -174,6 +174,46 @@ async def published_ports(browser_id: UUID | str) -> tuple[int, int] | None:
     return cdp, vnc
 
 
+async def published_host_ports() -> set[int]:
+    """宿主机上已被某个容器发布的端口。
+
+    后端与 Docker 同机时，端口探测用 bind 就够了；一体化部署里后端跑在容器内，
+    它只看得到自己的网络命名空间，宿主机端口一概「空闲」，分配出去会在
+    ``docker run -p`` 那一步直接失败。所以再问一次 Docker 补上这份事实。
+
+    查不到（Docker 不可用 / 命令失败）就返回空集合：宁可让 docker run 报错，
+    也不要因为拿不到数据就拒绝启动实例。
+    """
+    try:
+        proc = await asyncio.to_thread(
+            kernel_image.run, ["ps", "--format", "{{.Ports}}"], timeout=20
+        )
+    except kernel_image.DockerError as exc:
+        logger.debug("查询已发布端口失败：{}", exc)
+        return set()
+    if proc.returncode != 0:
+        return set()
+    return _parse_published(proc.stdout or "")
+
+
+def _parse_published(text: str) -> set[int]:
+    """从 ``docker ps --format {{.Ports}}`` 的输出里取宿主机端口。
+
+    行内形如 ``0.0.0.0:6080->6080/tcp, [::]:6081->6080/tcp``，
+    箭头左边冒号后的数字才是宿主机端口。
+    """
+    ports: set[int] = set()
+    for chunk in text.replace(",", "\n").splitlines():
+        if "->" not in chunk:
+            continue
+        left = chunk.split("->", 1)[0].strip()
+        try:
+            ports.add(int(left.rsplit(":", 1)[-1]))
+        except ValueError:
+            continue
+    return ports
+
+
 async def start_container(
     browser_id: UUID | str,
     *,

@@ -1,7 +1,54 @@
+# 一体化部署：PostgreSQL + FastAPI + 前端页面在同一个容器里。
+#
+#   docker compose up -d --build      构建并启动
+#   docker compose logs -f            看日志
+#   docker compose down               停掉（数据卷保留）
+#
+# 浏览器实例容器由本容器通过挂进来的 docker.sock 在宿主机上创建，
+# 所以它们是兄弟容器：docker ps 里能直接看到，启停删都在页面里操作。
 name: webweaver
 
 services:
+  webweaver:
+    build:
+      context: .
+      args:
+        # 国内构建建议保留清华源；换网络环境时用 PIP_INDEX_URL 覆盖
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    image: webweaver:latest
+    container_name: webweaver
+    restart: unless-stopped
+    ports:
+      # 左边是宿主机端口，右边固定 8000（容器内 uvicorn）
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      TZ: Asia/Shanghai
+      APP_PORT: "8000"
+      DB_NAME: webweaver
+      DB_USER: webweaver
+      DB_PASSWORD: ${DB_PASSWORD:-webweaver}
+      # 生产必须改：这个密钥签所有访问令牌，泄露等于谁都能登录
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-webweaver-change-this-secret-before-production}
+      # 留空则跟随浏览器访问控制台的 host，从局域网另一台机器打开也能看到画面
+      NOVNC_HOST: ${NOVNC_HOST:-}
+      DEBUG: "false"
+      FRONTEND_DIST: /app/frontend/dist
+    volumes:
+      # 数据库文件（容器重建不丢）
+      - appdata:/var/lib/postgresql/data
+      # 用宿主机的 Docker 起浏览器实例
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # 本机开发用的独立数据库（可选）。一体化部署不需要它：
+  #   docker compose --profile dev up -d postgres
   postgres:
+    profiles: ["dev"]
     image: postgres:18
     container_name: webweaver-postgres
     restart: unless-stopped
@@ -15,7 +62,7 @@ services:
       - "5432:5432"
     volumes:
       # postgres:18 起数据目录位于 /var/lib/postgresql/<major>/docker，挂父目录以兼容
-      - pgdata:/var/lib/postgresql
+      - pgdata-dev:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U webweaver -d webweaver"]
       interval: 5s
@@ -24,5 +71,7 @@ services:
       start_period: 10s
 
 volumes:
-  pgdata:
-    name: webweaver-pgdata
+  appdata:
+    name: webweaver-appdata
+  pgdata-dev:
+    name: webweaver-pgdata-dev

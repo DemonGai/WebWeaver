@@ -263,10 +263,11 @@ def test_options_keeps_current_kernel_for_edit(
     assert all(k["id"] != kernel["id"] for k in other["kernels"])
 
 
-def test_options_marks_deprecated_kernel(seeded_database: None) -> None:
-    """镜像就绪但已弃用的内核仍在下拉里，但要说明自己为什么还在。
+def test_options_keeps_deprecated_kernel(seeded_database: None) -> None:
+    """过滤只看镜像：已弃用但镜像就绪的内核仍在下拉里。
 
-    过滤按镜像走，状态只影响提示——否则用户会以为「明明有镜像为什么选不到」。
+    状态不参与过滤，也不写进下拉文案——要不要用是用户自己的判断，
+    卡片上已经写清楚了。
     """
     options = client.get("/api/browsers/options").json()
     kernel = next(k for k in options["kernels"] if k["supports_fingerprint"])
@@ -274,7 +275,7 @@ def test_options_marks_deprecated_kernel(seeded_database: None) -> None:
     try:
         body = client.get("/api/browsers/options").json()
         kept = next(k for k in body["kernels"] if k["id"] == kernel["id"])
-        assert "已弃用" in kept["hint"]
+        assert "已弃用" not in kept["hint"], "状态不进下拉文案"
     finally:
         _set_kernel_status(kernel["id"], "active")
 

@@ -299,14 +299,7 @@ function Select({
 }: {
   value: string
   onChange: (value: string) => void
-  options: {
-    id: string
-    label: string
-    hint: string
-    disabled: boolean
-    /** 内核才有：测试中 / 已弃用，展开下拉时挂在右侧 */
-    badge?: string
-  }[]
+  options: { id: string; label: string; hint: string; disabled: boolean }[]
   placeholder: string
 }) {
   const current = options.find((o) => o.id === value)
@@ -321,8 +314,7 @@ function Select({
           ...options.map((o) => ({
             value: o.id,
             label: o.label,
-            // 被占用的优先级最高：它决定了这一项能不能点
-            hint: o.disabled ? '已被占用' : o.badge || undefined,
+            hint: o.disabled ? '已被占用' : undefined,
             // 已被别的实例绑走的资源不能选，但仍然列出来 —— 看不到就不知道去向
             disabled: o.disabled,
           })),

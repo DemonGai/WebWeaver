@@ -42,7 +42,6 @@ from app.models import (
     IpBindingMode,
     IpStatus,
     Kernel,
-    KernelStatus,
     utcnow,
 )
 from app.schemas.browser import (
@@ -71,13 +70,6 @@ _STATUS_TEXT = {
     "error": "异常",
     "stopped": "已停止",
     "queued": "排队中",
-}
-
-# 停用内核在下拉里要说明自己为什么是「例外」被留了下来
-_KERNEL_STATUS_TEXT = {
-    "active": "可用",
-    "testing": "测试中",
-    "deprecated": "已弃用",
 }
 
 
@@ -185,22 +177,19 @@ def _caps_of(kernel: Kernel) -> KernelCaps:
 
 
 def _kernel_option(kernel: Kernel) -> KernelOption:
-    """内核记录 → 下拉项，顺带把「带不带指纹补丁」告诉前端。"""
+    """内核记录 → 下拉项，顺带把「带不带指纹补丁」告诉前端。
+
+    只写引擎与版本：内核状态（测试中 / 已弃用）不进下拉文案，选内核的人看的是
+    「能不能用」，状态在卡片上已经写清楚了。
+    """
     caps = _caps_of(kernel)
-    status_text = "" if kernel.status is KernelStatus.active else _KERNEL_STATUS_TEXT.get(
-        kernel.status.value, kernel.status.value
-    )
-    hint = f"{kernel.engine} · {kernel.version}"
-    if status_text:
-        hint += f" · {status_text}"
     return KernelOption(
         id=str(kernel.id),
         label=kernel.name,
-        hint=hint,
+        hint=f"{kernel.engine} · {kernel.version}",
         supports_fingerprint=caps.supported,
         fingerprint_note=caps.reason or caps.note,
         version=kernel.version,
-        badge=status_text,
     )
 
 
